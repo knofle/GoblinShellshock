@@ -61,27 +61,50 @@ local PRESETS = {
 }
 
 -- Lobby settings in send order. sky 0 = random. cat: a category heading shown above that row.
+-- vals: the only values the arrows step through (instead of lo to hi by step); names: shown instead of
+-- the number, one per value. toggle: a single On/Off button instead of arrows.
 local RULEDEFS = {
 	{ key = "hp",     label = "Tank HP",        lo = 20, hi = 300, step = 10, cat = "Tanks" },
 	{ key = "time",   label = "Shot time",      lo = 5,  hi = 60,  step = 5, fmt = "%ds" },
 	-- Fuel for driving, in moves: each move is worth Move distance columns
-	{ key = "gain",   label = "Fuel per turn", lo = 0,  hi = 3,   step = 1, fmt = "%d moves" },
-	{ key = "moves",  label = "Max fuel",      lo = 0,  hi = 9,   step = 1, fmt = "%d moves" },
+	{ key = "gain",   label = "Fuel per turn", lo = 0,  hi = 3,   step = 1,
+		names = { "None", "Some", "Medium", "Lots" } },
+	{ key = "moves",  label = "Max fuel",      lo = 0,  hi = 9,   step = 1, vals = { 0, 1, 2, 3, 5, 7, 9 },
+		names = { "None", "Little", "Some", "Medium", "Decent", "Lots", "Full tank" } },
 	{ key = "dist",   label = "Move distance",   lo = 5,  hi = 40,  step = 5 },
 	{ key = "crates", label = "Crates",         lo = 0,  hi = 10,  step = 1, fmt = "~1 per %d rounds", zero = "Off", cat = "Items" },
 	{ key = "start",  label = "Start items",    lo = 0,  hi = 8,   step = 1 },
-	{ key = "shop",   label = "Shop",           lo = 0,  hi = 1,   step = 1, fmt = "On", zero = "Off" },
+	{ key = "shop",   label = "Shop",           lo = 0,  hi = 1,   step = 1, fmt = "On", zero = "Off", toggle = true },
 	{ key = "gold",   label = "Shop gold",      lo = 50, hi = 300, step = 25, fmt = "%dg" },
 	{ key = "wind",   label = "Max wind",       lo = 0,  hi = 40,  step = 5, zero = "Calm", cat = "Battlefield" },
 	{ key = "mix",    label = "Team spawns",    lo = 0,  hi = 1,   step = 1, fmt = "Mixed", zero = "Sides" },
 	{ key = "sky",    label = "Sky",            lo = 0,  hi = #SKIES, step = 1, zero = "Random" },
+	-- Zone: hi and list are set from BIOMES once that's defined. Terrain: same order as GenTerrain's styles
+	{ key = "zone",   label = "Zone",           lo = 0,  hi = 0,   step = 1, zero = "Random" },
+	{ key = "terrain", label = "Terrain",       lo = 0,  hi = 5,   step = 1, zero = "Random",
+		list = { "Hills", "Mountain", "Valley", "Mesas", "Twin peaks" } },
 }
 
+-- Position of v in d.vals (or in lo..hi by step): the last one not above v
+function RULEDEFS.Index(d, v)
+	if not d.vals then return floor((v - d.lo) / d.step) + 1 end
+	local i = 1
+	while d.vals[i + 1] and d.vals[i + 1] <= v do i = i + 1 end
+	return i
+end
+
+-- One arrow click from v: the next value in d.vals, or v plus or minus step
+function RULEDEFS.Step(d, v, dir)
+	if d.vals then return d.vals[max(1, min(#d.vals, RULEDEFS.Index(d, v) + dir))] end
+	return max(d.lo, min(d.hi, v + dir * d.step))
+end
+
 function RULEDEFS.Show(d, v)
+	if d.names then return d.names[RULEDEFS.Index(d, v)] end
 	if v == 0 and d.zero then return d.zero end
 	if d.key == "sky" then return SKIES[v].name end
+	if d.list then return d.list[v].name or d.list[v] end
 	if d.key == "crates" and v == 1 then return "~1 per round" end -- a random chance each turn, not a schedule
-	if v == 1 and d.fmt == "%d moves" then return "1 move" end
 	return (d.fmt or "%d"):format(v)
 end
 
@@ -92,12 +115,13 @@ function RULEDEFS.Copy(src)
 	return r
 end
 
--- Index of the preset these rules match (sky and team spawns ignored), or nil for custom
+-- Index of the preset these rules match (map look and team spawns ignored), or nil for custom
+RULEDEFS.KEEP = { sky = true, mix = true, zone = true, terrain = true }
 function RULEDEFS.Preset(r)
 	for k, p in ipairs(PRESETS) do
 		local same = true
 		for _, d in ipairs(RULEDEFS) do
-			if d.key ~= "sky" and d.key ~= "mix" and p[d.key] ~= r[d.key] then same = false end
+			if not RULEDEFS.KEEP[d.key] and p[d.key] ~= r[d.key] then same = false end
 		end
 		if same then return k end
 	end
@@ -172,7 +196,7 @@ local WEAPONS = {
 	{ name = "Power Word: Shield",   power = "shield",   weight = 5, use = "Defensive",
 		desc = "Absorbs the next 60 damage you take." },
 	{ name = "Rocket Boots",         power = "moves",    weight = 6, price = 5, late = true, use = "Movement",
-		desc = "Tops up your fuel with 2 extra moves' worth of driving." },
+		desc = "Adds a good splash of fuel for driving, even past a full tank." },
 	{ name = "Blink",                power = "teleport", weight = 4, late = true, use = "Movement",
 		desc = "Teleport to a spot you click on the field." },
 	{ name = "Goblin Jetpack",       power = "jet",      weight = 4, price = 15, late = true, use = "Movement",
@@ -223,6 +247,9 @@ local BIOMES = {
 	{ name = "The Waking Shores", dirt = { 0.28, 0.25, 0.25 }, top = { 0.4, 0.6, 0.3 }, flora = { 0.45, 0.65, 0.3 }, trees = { "pine" }, rock = "basalt", stone = { 0.4, 0.38, 0.38 }, back = "peaks", sky = { 1, 0.85, 0.8 } },
 	{ name = "Hallowfall",      dirt = { 0.45, 0.38, 0.3 }, top = { 0.85, 0.75, 0.4 }, flora = { 0.95, 0.85, 0.45 }, trees = { "oak" }, sky = { 1, 0.95, 0.8 } },
 }
+for _, d in ipairs(RULEDEFS) do
+	if d.key == "zone" then d.hi, d.list = #BIOMES, BIOMES end
+end
 
 -- Map props. The list part is the pick order; each match uses none, one or two kinds.
 -- min/max: how many; w/h: size; block: stops shells; radius/dmg/knock: explodes when hit (knock as for weapons);
@@ -352,7 +379,6 @@ frame:SetFrameStrata("HIGH")
 Draggable(frame)
 frame:SetScript("OnHide", function() wipe(held) end)
 frame:Hide()
-tinsert(UISpecialFrames, "GoblinShellshockFrame")
 Panel(frame)
 
 local status
@@ -381,7 +407,12 @@ do
 	close:SetPoint("TOPRIGHT", -4, -6)
 	close:SetNormalFontObject("GameFontNormal")
 	close:SetText("x")
-	close:SetScript("OnClick", function() frame:Hide() end)
+	close:SetScript("OnClick", function() frame.Quit() end)
+
+	-- Minimize keeps you in the match; the reminder under the toast brings the window back
+	local mini = FlatButton(frame, 18, 18, "_")
+	mini:SetPoint("TOPRIGHT", -26, -7)
+	mini:SetScript("OnClick", function() frame:Hide() end)
 
 	-- Window scale, 75% to 200%, saved in GoblinShellshockDB[key].
 	-- Keeps the window on the same screen spot while it resizes (centre, or top for top-anchored ones);
@@ -404,7 +435,7 @@ do
 	function frame.SetGameScale(s) frame.SetWinScale(frame, "scale", s) end
 
 	local help = FlatButton(frame, 18, 18, "?")
-	help:SetPoint("TOPRIGHT", -122, -7)
+	help:SetPoint("TOPRIGHT", -142, -7)
 	help:SetScript("OnClick", function()
 		if frame.help and frame.help:IsShown() then frame.help:Hide() else frame.Help() end
 	end)
@@ -474,10 +505,10 @@ function frame.ScaleSlider(win, x, y)
 	end
 	win.SyncScale()
 end
-frame.ScaleSlider(frame, -28, -7)
+frame.ScaleSlider(frame, -48, -7)
 
 local restartBtn = FlatButton(frame, 84, 18)
-restartBtn:SetPoint("TOPRIGHT", -146, -7)
+restartBtn:SetPoint("TOPRIGHT", -166, -7)
 restartBtn:Hide()
 -- After a match: same players, teams and rules again, skipping the lobby
 restartBtn.again = FlatButton(frame, 84, 18, "Play again")
@@ -1359,8 +1390,9 @@ do
 		tip:SetHeight(9 + tip.title:GetStringHeight() + 5 + tip.desc:GetStringHeight() + 6 + tip.stats:GetStringHeight() + 10)
 		tip:Show()
 	end
-	hover:SetScript("OnEnter", function() if game then hud.ShowTip() end end)
+	hover:SetScript("OnEnter", function() if game and not (hud.pick and hud.pick:IsShown()) then hud.ShowTip() end end)
 	hover:SetScript("OnLeave", function() tip:Hide() end)
+	hud.hover = hover
 
 	-- Driving fuel meter: full = the Max fuel rule (Rocket Boots can overfill it)
 	Text(202, "GameFontNormal"):SetText("Fuel")
@@ -1704,7 +1736,14 @@ lobbyFrame:SetFrameStrata("HIGH")
 Draggable(lobbyFrame)
 Panel(lobbyFrame)
 lobbyFrame:Hide()
-tinsert(UISpecialFrames, "GoblinShellshockLobby")
+-- Escape leaves the lobby, like the x (not UISpecialFrames, which would only hide it)
+lobbyFrame:EnableKeyboard(true)
+if not InCombatLockdown() then lobbyFrame:SetPropagateKeyboardInput(true) end
+lobbyFrame:SetScript("OnKeyDown", function(self, key)
+	if InCombatLockdown() then return end
+	self:SetPropagateKeyboardInput(key ~= "ESCAPE")
+	if key == "ESCAPE" then frame.Quit() end
+end)
 
 do
 	local L = lobbyFrame
@@ -1734,12 +1773,15 @@ do
 
 	local x = FlatButton(L, 18, 18, "x")
 	x:SetPoint("RIGHT", header, "RIGHT", -6, 0)
-	x:SetScript("OnClick", function() L:Hide() end)
+	x:SetScript("OnClick", function() frame.Quit() end)
+	local mini = FlatButton(L, 18, 18, "_")
+	mini:SetPoint("RIGHT", header, "RIGHT", -26, 0)
+	mini:SetScript("OnClick", function() L:Hide() end)
 
 	L.count = L:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	L.count:SetPoint("RIGHT", header, "RIGHT", -30, 0)
+	L.count:SetPoint("RIGHT", header, "RIGHT", -50, 0)
 
-	frame.ScaleSlider(L, -70, -7)
+	frame.ScaleSlider(L, -90, -7)
 
 	L.host = L:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	L.host:SetPoint("TOPLEFT", 12, -42)
@@ -1864,7 +1906,13 @@ do
 		local more = FlatButton(L, 18, 18, ">")
 		more:SetPoint("TOPLEFT", LW + 116 + 18 + 86, y)
 		L.rules[k] = { label = label, less = less, more = more, val = val }
-		y = y - 23
+		if d.toggle then
+			-- One button across the arrows and the value; non-hosts see the plain value instead
+			local tog = FlatButton(L, 18 + 86 + 18, 18)
+			tog:SetPoint("TOPLEFT", LW + 116, y)
+			L.rules[k].toggle = tog
+		end
+		y = y - 21
 	end
 	L.note = L:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	L.note:SetPoint("TOPLEFT", LW + 12, y - 2)
@@ -1899,8 +1947,13 @@ local function DrawLobby()
 	for k, d in ipairs(RULEDEFS) do
 		local row, v = L.rules[k], rules[d.key]
 		row.val:SetText(RULEDEFS.Show(d, v))
-		row.less:SetShown(host)
-		row.more:SetShown(host)
+		row.less:SetShown(host and not row.toggle)
+		row.more:SetShown(host and not row.toggle)
+		if row.toggle then
+			row.toggle:SetText(RULEDEFS.Show(d, v))
+			row.toggle:SetShown(host)
+			row.val:SetShown(not host)
+		end
 		row.less:SetEnabled(v > d.lo)
 		row.more:SetEnabled(v < d.hi)
 		local dim = (d.key == "gold" and rules.shop == 0) or (d.key == "mix" and not teams)
@@ -2068,10 +2121,10 @@ end
 -- Simulation (integer state only: terrain, positions, hp, crates)
 ------------------------------------------------------------------------
 -- Returns heights and the style name. Styles change the control point spacing,
--- height range and smoothing, then add a shape on top.
-local function GenTerrain()
+-- height range and smoothing, then add a shape on top. pick: the Terrain rule (0 = random).
+local function GenTerrain(pick)
 	local STYLES = { "hills", "mountain", "valley", "mesas", "twin peaks" }
-	local style = Rand(1, #STYLES)
+	local style = pick > 0 and pick or Rand(1, #STYLES)
 	local step, lo, hi, smooth = 30, 60, 200, 3
 	if style == 3 then
 		lo, hi = 110, 210
@@ -3167,6 +3220,72 @@ local function CycleWeapon(d)
 	DrawStatus()
 end
 
+-- Clicking the weapon name opens a list of everything you carry, 10 to a column; click one to pick it.
+-- Closes again on a second click, a pick, or once you can't aim any more.
+do
+	local pick = CreateFrame("Frame", nil, hud)
+	pick:SetFrameLevel(hud:GetFrameLevel() + 30)
+	pick:SetPoint("BOTTOMLEFT", hud, "TOPLEFT", 0, 6)
+	pick:EnableMouse(true)
+	Panel(pick)
+	pick:Hide()
+	pick.rows = {}
+	hud.pick = pick
+
+	function pick.Open()
+		local t = game.tanks[game.cur]
+		local n = 0
+		for i, w in ipairs(WEAPONS) do
+			if t.ammo[i] ~= 0 then
+				n = n + 1
+				local b = pick.rows[n]
+				if not b then
+					b = CreateFrame("Button", nil, pick)
+					b:SetSize(200, 16)
+					b.sel = b:CreateTexture(nil, "BACKGROUND")
+					b.sel:SetAllPoints()
+					b.sel:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.2)
+					local hl = b:CreateTexture(nil, "HIGHLIGHT")
+					hl:SetAllPoints()
+					hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+					b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+					b.name:SetPoint("LEFT", 4, 0)
+					b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+					b.count:SetPoint("RIGHT", -4, 0)
+					b:SetScript("OnClick", function(self)
+						if CanAim() then
+							game.tanks[game.cur].weapon = self.idx
+							DrawStatus()
+						end
+						pick:Hide()
+					end)
+					pick.rows[n] = b
+				end
+				b.idx = i
+				b.name:SetText(WEAPONS.Icon(w, 14) .. " " .. w.name)
+				local r, g, bl = Rarity(w)
+				b.name:SetTextColor(r, g, bl)
+				b.count:SetText(t.ammo[i] < 0 and "" or ("x" .. t.ammo[i]))
+				b:SetPoint("TOPLEFT", 6 + floor((n - 1) / 10) * 204, -6 - (n - 1) % 10 * 16)
+				b:Show()
+			end
+		end
+		for k = n + 1, #pick.rows do pick.rows[k]:Hide() end
+		pick:SetSize(8 + ceil(n / 10) * 204, 12 + min(n, 10) * 16)
+		hud.tip:Hide()
+		pick:Show()
+	end
+
+	pick:SetScript("OnUpdate", function()
+		if not CanAim() then pick:Hide() return end
+		local cur = game.tanks[game.cur].weapon
+		for _, b in ipairs(pick.rows) do b.sel:SetShown(b.idx == cur) end
+	end)
+	hud.hover:SetScript("OnMouseDown", function()
+		if pick:IsShown() then pick:Hide() elseif CanAim() then pick.Open() end
+	end)
+end
+
 -- Held A / D: one column at a time at the drawn tank's speed (20 columns a second).
 -- A stretch ends (and is sent) on release, a turn around, a land mine or anything that ends the turn.
 function frame.Drive(elapsed)
@@ -3223,8 +3342,8 @@ local function StartGame(s, roster, teams, rules, solo, host)
 	SetSeed(s)
 	-- Order of Rand calls matters: terrain, biome, sky, spawn slots, props, items, turn order, first player, wind,
 	-- then the shop fill
-	local h, style = GenTerrain()
-	local biome = BIOMES[Rand(1, #BIOMES)]
+	local h, style = GenTerrain(rules.terrain)
+	local biome = BIOMES[rules.zone > 0 and rules.zone or Rand(1, #BIOMES)]
 	local sky = SKIES[rules.sky > 0 and rules.sky or Rand(1, #SKIES)]
 
 	-- Spawn slots: the outer tanks keep their spots near the map edges, but with 4+ players the gaps
@@ -3564,6 +3683,18 @@ local function CloseLobby()
 	toast.HostUpdate()
 end
 
+-- Leaving: the x, Escape and /gs quit. Hosting a running match ends it for everyone (nobody else can call time)
+function frame.Quit()
+	if game and game.host == Me() and not game.solo and not game.over then
+		Send("CLOSE")
+		groupHost = nil
+	end
+	game = nil
+	frame:Hide()
+	CloseLobby()
+	toast.HostUpdate()
+end
+
 local function StartMatch()
 	local count = { 0, 0 }
 	for _, p in ipairs(lobby.players) do count[p.team] = count[p.team] + 1 end
@@ -3617,9 +3748,10 @@ do
 	for k, b in ipairs(L.presets) do
 		b:SetScript("OnClick", function()
 			if not IsHost() then return end
-			local sky, mix = lobby.rules.sky, lobby.rules.mix -- presets don't touch the sky or team spawns
+			-- Presets don't touch the map look or team spawns
+			local old = lobby.rules
 			lobby.rules = RULEDEFS.Copy(PRESETS[k])
-			lobby.rules.sky, lobby.rules.mix = sky, mix
+			for key in pairs(RULEDEFS.KEEP) do lobby.rules[key] = old[key] end
 			BroadcastLobby()
 		end)
 	end
@@ -3628,11 +3760,14 @@ do
 		local function Step(dir)
 			if not IsHost() then return end
 			local r = lobby.rules
-			r[d.key] = max(d.lo, min(d.hi, r[d.key] + dir * d.step))
+			r[d.key] = RULEDEFS.Step(d, r[d.key], dir)
 			BroadcastLobby()
 		end
 		row.less:SetScript("OnClick", function() Step(-1) end)
 		row.more:SetScript("OnClick", function() Step(1) end)
+		if row.toggle then
+			row.toggle:SetScript("OnClick", function() Step(lobby.rules[d.key] == d.lo and 1 or -1) end)
+		end
 	end
 	L.more:SetScript("OnClick", function()
 		if not (lobby and lobby.solo) or #lobby.players >= MAXPLAYERS then return end
@@ -3701,8 +3836,9 @@ restartBtn.again:SetScript("OnClick", function()
 	if lobby then ShowLobby() end -- couldn't start: fall back to the lobby
 end)
 
--- Host reminder: while your group lobby or match is up but its window is closed, a small panel
--- under the toast says so, with buttons to reopen it or close it for everyone.
+-- Minimized reminder: while you're in a lobby or match but its window is hidden (minimized, or after
+-- combat), a small panel under the toast says so, with buttons to reopen it or leave.
+-- Leaving as the host closes it for everyone.
 do
 	local r = CreateFrame("Button", nil, UIParent)
 	r:SetSize(TOASTW, 52)
@@ -3724,15 +3860,31 @@ do
 	toast.hosting = r
 
 	function toast.HostUpdate()
-		local what
-		if lobby and lobby.host == Me() and not lobby.solo then
-			what = "Your Goblin Shellshock lobby is still open."
-		elseif game and game.host == Me() and not game.solo and not game.over then
-			what = "Your Goblin Shellshock match is still running."
+		local what, leave
+		local mine = lobby and lobby.host == Me()
+		if lobby and (mine or joining == lobby.host) then
+			if mine then
+				what, leave = "Your Goblin Shellshock lobby is still open.", "Close lobby"
+			else
+				what, leave = "You're in " .. Short(lobby.host) .. "'s lobby.", "Leave"
+			end
+		elseif game and (not game.spectating or game.specSent) then
+			if game.over then
+				what, leave = "Your Goblin Shellshock match has ended.", "Close"
+			elseif game.spectating then
+				what, leave = "You're watching a Goblin Shellshock match.", "Stop watching"
+			elseif game.host == Me() and not game.solo then
+				what, leave = "Your Goblin Shellshock match is still running.", "End match"
+			else
+				what, leave = "Your Goblin Shellshock match is minimized.", "Leave"
+			end
 		end
 		local show = what and not frame:IsShown() and not lobbyFrame:IsShown()
 			and not InCombatLockdown() and not UnitAffectingCombat("player")
-		if show then r.text:SetText(what) end
+		if show then
+			r.text:SetText(what)
+			close:SetText(leave)
+		end
 		r:SetShown(show and true or false)
 	end
 
@@ -3742,17 +3894,7 @@ do
 	end
 	r:SetScript("OnClick", Reopen)
 	open:SetScript("OnClick", Reopen)
-	close:SetScript("OnClick", function()
-		if lobby and lobby.host == Me() then
-			CloseLobby()
-		elseif game and game.host == Me() then
-			Send("CLOSE")
-			groupHost = nil
-			game = nil
-			frame:Hide()
-		end
-		toast.HostUpdate()
-	end)
+	close:SetScript("OnClick", function() frame.Quit() end)
 end
 
 frame:SetScript("OnShow", function()
@@ -4015,6 +4157,12 @@ frame:SetScript("OnKeyDown", function(self, key)
 	if key == "TAB" and game then
 		self:SetPropagateKeyboardInput(false)
 		DrawScores()
+		return
+	end
+	-- Escape closes the help first, then leaves the match like the x
+	if key == "ESCAPE" then
+		self:SetPropagateKeyboardInput(false)
+		if frame.help and frame.help:IsShown() then frame.help:Hide() else frame.Quit() end
 		return
 	end
 	local drive = key == "A" or key == "D"
@@ -4595,15 +4743,7 @@ SLASH_GOBLINSHELLSHOCK2 = "/gs"
 SlashCmdList.GOBLINSHELLSHOCK = function(msg)
 	msg = strtrim(msg:lower())
 	if msg == "quit" then
-		-- Hosting a running match: end it for everyone (nobody else can call time)
-		if game and game.host == Me() and not game.solo and not game.over then
-			Send("CLOSE")
-			groupHost = nil
-		end
-		game = nil
-		frame:Hide()
-		CloseLobby()
-		toast.HostUpdate()
+		frame.Quit()
 		return
 	end
 	if InCombatLockdown() then Print("Not available in combat.") return end
