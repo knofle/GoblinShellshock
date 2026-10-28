@@ -119,13 +119,15 @@ end
 
 -- Weapons and power-ups. Goblin Shell (1) is unlimited; everything else comes from crates.
 -- weight = crate rarity: 6-8 common, 4-5 uncommon, 2-3 rare, 1 epic.
--- Behaviour: split (shells at apex), pellets (spread at launch), burst/burstV/spread (bomblets on impact),
+-- Behaviour: split (shells at apex), pellets (spread at launch), burst/burstV/spread (bomblets on impact;
+-- carry: they fan out forward only and keep that share of the shell's sideways speed),
 -- hail (shells from the sky), roll, bounce (times), home (steers at enemies), speed (launch multiplier),
 -- napalm (burn reach per blob), fuse/drops (bursts in the air after fuse seconds into burning blobs), leech (heals the damage dealt),
 -- wall (raises a column of dirt), knock (columns a close hit shoves tanks, default 4),
 -- drill (px of earth it bores through in a straight line; the tunnel caves in).
 -- power = used from the selector instead of fired. one = crates and the shop give 1, not 2.
 -- crate = only from crates: not in the shop, the shop's leftover gold or the starting items.
+-- use: the shop group (Utility, Defensive, Movement); Offensive when left out.
 -- price: shop price instead of the one from weight. late: crates drop it more often as rounds pass.
 -- laser: a straight sight line out of the barrel while you aim it. direct: precise hits on a tank deal more.
 local WEAPONS = {
@@ -143,7 +145,7 @@ local WEAPONS = {
 		desc = "Splits into 5 rockets at the top of its arc." },
 	{ name = "Scatter Shot",         radius = 10, dmg = 20,  weight = 7, pellets = 5,
 		desc = "Fires 5 pellets in a narrow spread." },
-	{ name = "Iron Grenade Cluster", radius = 16, dmg = 30,  weight = 4, burst = 6, burstV = 150, spread = 140,
+	{ name = "Iron Grenade Cluster", radius = 16, dmg = 30,  weight = 4, burst = 6, burstV = 100, spread = 40, carry = 0.3,
 		desc = "Scatters 6 grenades around the impact." },
 	{ name = "Molten Eruption",      radius = 14, dmg = 25,  weight = 4, burst = 6, burstV = 260, spread = 50,
 		desc = "Erupts 6 molten blobs high into the air on impact." },
@@ -157,23 +159,23 @@ local WEAPONS = {
 		desc = "Steers toward the nearest enemy on the way down." },
 	{ name = "Aimed Shot",           radius = 8,  dmg = 65,  weight = 5, speed = 1.6, knock = 10, laser = true, direct = true,
 		desc = "Fast and flat, with a laser sight. A small but strong blast." },
-	{ name = "Goblin Drill Rocket",  radius = 20, dmg = 30,  weight = 4, drill = 150,
+	{ name = "Goblin Drill Rocket",  radius = 20, dmg = 30,  weight = 4, drill = 150, use = "Utility",
 		desc = "Bores straight through up to 150px of earth, then flies on. The tunnel caves in behind it." },
-	{ name = "Rain of Fire",         radius = 6,  dmg = 15,  weight = 4, napalm = 25, fuse = 0.9, drops = 7,
+	{ name = "Rain of Fire",         radius = 6,  dmg = 22,  weight = 4, napalm = 30, fuse = 0.9, drops = 7,
 		desc = "Bursts in the air and rains 7 burning blobs." },
 	{ name = "Drain Life",           radius = 32, dmg = 40,  weight = 4, leech = true,
 		desc = "Heals you for all the damage it deals." },
-	{ name = "Seaforium Charge",     radius = 70, dmg = 20,  weight = 5, knock = 20,
+	{ name = "Seaforium Charge",     radius = 70, dmg = 20,  weight = 5, knock = 20, use = "Utility",
 		desc = "Blasts a huge crater but deals little damage. Throws tanks far." },
-	{ name = "Earthen Wall",         radius = 10,            weight = 6, wall = 70,
+	{ name = "Earthen Wall",         radius = 10,            weight = 6, wall = 70, use = "Defensive",
 		desc = "Raises a tall wall of earth to hide behind." },
-	{ name = "Power Word: Shield",   power = "shield",   weight = 5,
+	{ name = "Power Word: Shield",   power = "shield",   weight = 5, use = "Defensive",
 		desc = "Absorbs the next 60 damage you take." },
-	{ name = "Rocket Boots",         power = "moves",    weight = 6, price = 5, late = true,
+	{ name = "Rocket Boots",         power = "moves",    weight = 6, price = 5, late = true, use = "Movement",
 		desc = "Tops up your fuel with 2 extra moves' worth of driving." },
-	{ name = "Blink",                power = "teleport", weight = 4, late = true,
+	{ name = "Blink",                power = "teleport", weight = 4, late = true, use = "Movement",
 		desc = "Teleport to a spot you click on the field." },
-	{ name = "Goblin Jetpack",       power = "jet",      weight = 4, price = 15, late = true,
+	{ name = "Goblin Jetpack",       power = "jet",      weight = 4, price = 15, late = true, use = "Movement",
 		desc = "Fly for 3 seconds. Steer with WASD or the arrow keys, then aim from wherever you land." },
 }
 
@@ -1179,40 +1181,52 @@ do
 	shop.gold = shop:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	shop.gold:SetPoint("RIGHT", shop.clock, "LEFT", -16, 0)
 
+	-- Grouped by use, each under a small heading. Offensive fills both columns across the top;
+	-- below it Utility and Defensive stack on the left, Movement sits on the right.
 	shop.items = {}
-	local n = 0
-	for i, w in ipairs(WEAPONS) do
-		if w.weight and not w.crate then
-			n = n + 1
-			local b = CreateFrame("Button", nil, shop)
-			b:SetSize(264, 17)
-			b:SetPoint("TOPLEFT", n <= 12 and 12 or 284, -32 - ((n - 1) % 12) * 18)
-			b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-			local bg = b:CreateTexture(nil, "BACKGROUND")
-			bg:SetAllPoints()
-			bg:SetColorTexture(0.1, 0.1, 0.11)
-			local hl = b:CreateTexture(nil, "HIGHLIGHT")
-			hl:SetAllPoints()
-			hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
-			b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-			b.name:SetPoint("LEFT", 6, 0)
-			b.name:SetText(WEAPONS.Icon(w, 14) .. " " .. w.name)
-			local r, g, bl = Rarity(w)
-			b.name:SetTextColor(r, g, bl)
-			b.price = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-			b.price:SetPoint("RIGHT", -6, 0)
-			b.price:SetText(Price(w) .. "g")
-			b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-			b.count:SetPoint("RIGHT", -40, 0)
-			b.idx = i
-			b:SetScript("OnClick", function(self, btn) shop.Pick(self.idx, btn == "RightButton") end)
-			b:SetScript("OnEnter", function(self)
-				local wp = WEAPONS[self.idx]
-				shop.desc:SetText(wp.name .. ": |cffffffff" .. wp.desc .. "|r")
-			end)
-			b:SetScript("OnLeave", function() shop.desc:SetText("") end)
-			shop.items[n] = b
+	local n, y, band = 0, -32, -32
+	for _, group in ipairs({ "Offensive", "Utility", "Defensive", "Movement" }) do
+		local x, cols, k = 12, group == "Offensive" and 2 or 1, 0
+		if group == "Utility" then band = y end
+		if group == "Movement" then x, y = 284, band end
+		local label = shop:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		label:SetPoint("TOPLEFT", x + 2, y - 1)
+		label:SetText(group)
+		y = y - 13
+		for i, w in ipairs(WEAPONS) do
+			if w.weight and not w.crate and (w.use or "Offensive") == group then
+				n, k = n + 1, k + 1
+				local b = CreateFrame("Button", nil, shop)
+				b:SetSize(264, 15)
+				b:SetPoint("TOPLEFT", x + (k - 1) % cols * 272, y - floor((k - 1) / cols) * 16)
+				b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+				local bg = b:CreateTexture(nil, "BACKGROUND")
+				bg:SetAllPoints()
+				bg:SetColorTexture(0.1, 0.1, 0.11)
+				local hl = b:CreateTexture(nil, "HIGHLIGHT")
+				hl:SetAllPoints()
+				hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+				b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+				b.name:SetPoint("LEFT", 6, 0)
+				b.name:SetText(WEAPONS.Icon(w, 14) .. " " .. w.name)
+				local r, g, bl = Rarity(w)
+				b.name:SetTextColor(r, g, bl)
+				b.price = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+				b.price:SetPoint("RIGHT", -6, 0)
+				b.price:SetText(Price(w) .. "g")
+				b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+				b.count:SetPoint("RIGHT", -40, 0)
+				b.idx = i
+				b:SetScript("OnClick", function(self, btn) shop.Pick(self.idx, btn == "RightButton") end)
+				b:SetScript("OnEnter", function(self)
+					local wp = WEAPONS[self.idx]
+					shop.desc:SetText(wp.name .. ": |cffffffff" .. wp.desc .. "|r")
+				end)
+				b:SetScript("OnLeave", function() shop.desc:SetText("") end)
+				shop.items[n] = b
+			end
 		end
+		y = y - floor((k + cols - 1) / cols) * 16
 	end
 
 	shop.desc = shop:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -2823,7 +2837,14 @@ local function StepShell(s, w)
 		end
 		if w.bounce and (s.bounces or 0) < w.bounce then
 			s.bounces, s.bounced = (s.bounces or 0) + 1, true
-			s.y, s.vy, s.vx = h[col] + 1, abs(s.vy) * 0.6, s.vx * 0.8
+			local px, py = s.x - s.vx * STEP, s.y - s.vy * STEP
+			local pc = floor(px / COLW) + 1
+			if pc ~= col and py <= h[col] and h[col] - h[pc] > 4 then
+				-- Flew sideways into a steep face: bounces back off the wall
+				s.x, s.y, s.vx = px, py, -s.vx * 0.6
+			else
+				s.y, s.vy, s.vx = h[col] + 1, abs(s.vy) * 0.6, s.vx * 0.8
+			end
 			return
 		end
 		return "hit"
@@ -2831,11 +2852,13 @@ local function StepShell(s, w)
 end
 
 -- Bomblets after the main shell lands (cluster, volcano) or shells dropping from the sky (hail)
-local function Burst(shells, w, x, y)
+local function Burst(shells, w, x, y, vx)
 	if w.burst then
+		local dir = vx < 0 and -1 or 1
 		for k = 1, w.burst do
-			local a = rad(90 - w.spread / 2 + w.spread * (k - 1) / (w.burst - 1))
-			local c = NewShell(x, y + 3, cos(a) * w.burstV, sin(a) * w.burstV)
+			local f = (k - 1) / (w.burst - 1)
+			local a = rad(w.carry and 90 - dir * w.spread * f or 90 - w.spread / 2 + w.spread * f)
+			local c = NewShell(x, y + 3, cos(a) * w.burstV + vx * (w.carry or 0), sin(a) * w.burstV)
 			c.child, c.steps = true, 11
 			tinsert(shells, c)
 		end
@@ -2863,13 +2886,13 @@ local function StepShot(shot)
 				tinsert(shot.impacts, x)
 				tinsert(shot.impacts, y)
 				ImpactFx(w, x, y)
-				if not s.child then Burst(shells, w, x, y) end
+				if not s.child then Burst(shells, w, x, y, s.vx) end
 			end
 			tremove(shells, i)
 		elseif w.drops and not s.child and s.steps >= w.fuse / STEP then
 			-- Airburst: the shell pops and rains burning blobs
 			for k = 1, w.drops do
-				local c = NewShell(s.x, s.y, s.vx * 0.4 + (k - (w.drops + 1) / 2) * 22, min(s.vy, 0) * 0.3 - 20)
+				local c = NewShell(s.x, s.y, s.vx * 0.4 + (k - (w.drops + 1) / 2) * 15, min(s.vy, 0) * 0.3 - 20)
 				c.child, c.steps, c.blob = true, 11, true
 				tinsert(shells, c)
 			end
