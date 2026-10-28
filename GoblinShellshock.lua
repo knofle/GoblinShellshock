@@ -125,6 +125,7 @@ end
 -- wall (raises a column of dirt), knock (columns a close hit shoves tanks, default 4),
 -- drill (px of earth it bores through in a straight line; the tunnel caves in).
 -- power = used from the selector instead of fired. one = crates and the shop give 1, not 2.
+-- crate = only from crates: not in the shop, the shop's leftover gold or the starting items.
 -- price: shop price instead of the one from weight. late: crates drop it more often as rounds pass.
 -- laser: a straight sight line out of the barrel while you aim it. direct: precise hits on a tank deal more.
 local WEAPONS = {
@@ -134,7 +135,7 @@ local WEAPONS = {
 		desc = "A heavier shell with a much bigger blast." },
 	{ name = "Goblin Sapper Charge", radius = 60, dmg = 85,  weight = 2, knock = 14,
 		desc = "A huge blast. Stand well back." },
-	{ name = "The Big One",          radius = 90, dmg = 100, weight = 1, one = true,
+	{ name = "The Big One",          radius = 90, dmg = 100, weight = 1, one = true, crate = true,
 		desc = "Flattens everything in a wide area. Goblins call it subtle." },
 	{ name = "Splintering Shell",    radius = 18, dmg = 35,  weight = 8, split = 3,
 		desc = "Splits into 3 shells at the top of its arc." },
@@ -551,6 +552,16 @@ for i = 1, NCOLS do CreateCol(i) end
 local hv, hvv, terrainDirty = {}, {}, false
 
 local function GroundAt(x) return hv[max(1, min(NCOLS, floor(x / COLW) + 1))] or 0 end
+
+-- Ground at x blended between column centres, so a driving tank rides a slope instead of its
+-- stair steps. Steps taller than CLIMB are cliffs and stay sharp.
+function field.SmoothGround(x)
+	local f = x / COLW - 0.5
+	local c = floor(f)
+	local a, b = hv[max(1, min(NCOLS, c + 1))] or 0, hv[max(1, min(NCOLS, c + 2))] or 0
+	if abs(b - a) > CLIMB then return f - c < 0.5 and a or b end
+	return a + (b - a) * (f - c)
+end
 
 -- Stands a w x h sprite on the ground at x, y, leaning `lean` times the slope under it (1 = follows
 -- the ground). Rotates about its bottom centre and stays anchored by CENTER. Returns the angle.
@@ -1171,7 +1182,7 @@ do
 	shop.items = {}
 	local n = 0
 	for i, w in ipairs(WEAPONS) do
-		if w.weight then
+		if w.weight and not w.crate then
 			n = n + 1
 			local b = CreateFrame("Button", nil, shop)
 			b:SetSize(264, 17)
@@ -2136,8 +2147,12 @@ end
 
 -- Weighted random item index (shared PRNG, so the same on every client)
 -- rounds: rounds played so far (crate drops only); `late` items gain 1 weight per 3 rounds, up to +8
-local function PickItem(rounds)
-	local function Weight(w) return (w.weight or 0) + (w.late and min(8, floor((rounds or 0) / 3)) or 0) end
+-- given: for starting items and the shop's leftover gold, which skip crate-only items
+local function PickItem(rounds, given)
+	local function Weight(w)
+		if given and w.crate then return 0 end
+		return (w.weight or 0) + (w.late and min(8, floor((rounds or 0) / 3)) or 0)
+	end
 	local total = 0
 	for _, w in ipairs(WEAPONS) do total = total + Weight(w) end
 	local r = Rand(1, total)
@@ -3255,7 +3270,7 @@ local function StartGame(s, roster, teams, rules, solo, host)
 	end
 	PlaceProps()
 	for _, t in ipairs(game.tanks) do
-		for _ = 1, rules.start do GiveItem(t, PickItem()) end
+		for _ = 1, rules.start do GiveItem(t, PickItem(nil, true)) end
 	end
 
 	-- Turn order: shuffled, or alternating teams (each team shuffled)
@@ -3375,7 +3390,7 @@ function shop.Finish()
 		local tries = 0
 		while left >= 15 and tries < 200 do
 			tries = tries + 1
-			local k = PickItem()
+			local k = PickItem(nil, true)
 			local w = WEAPONS[k]
 			if Price(w) <= left and (w.power or max(0, t.ammo[k]) < (w.one and 1 or CRATEAMMO)) then
 				GiveItem(t, k)
@@ -3418,7 +3433,7 @@ function shop.Receive(i, list)
 	local cart, cost = {}, 0
 	for _, k in ipairs(list) do
 		local w = WEAPONS[k]
-		if w and w.weight then
+		if w and w.weight and not w.crate then
 			cost = cost + Price(w)
 			if cost > game.rules.gold then break end
 			tinsert(cart, k)
@@ -3729,6 +3744,9 @@ end)
 lobbyFrame:HookScript("OnShow", toast.HostUpdate)
 lobbyFrame:HookScript("OnHide", toast.HostUpdate)
 
+-- Join and spectate popups that come unasked can be turned off in Options; /gs still shows them
+function frame.JoinPopups() return frame.forceJoin or GoblinShellshockDB.joinPopups ~= false end
+
 local function OnMessage(msg, sender)
 	local cmd, a, b, c, d, e = strsplit(":", msg)
 	-- One lobby or match per group. The channel delivers in the same order to everyone, so the first
@@ -3757,11 +3775,17 @@ local function OnMessage(msg, sender)
 		if a ~= VERSION then
 			local why = ("%s opened a lobby on Goblin Shellshock v%s. You have v%s, so you can't join until you're on the same version."):format(Short(sender), a or "?", VERSION)
 			Print(why)
-			ShowToast(("%s's lobby is v%s, you have v%s."):format(Short(sender), a or "?", VERSION), "OK", nil, sender, TOASTTIME)
+			if frame.JoinPopups() then
+				ShowToast(("%s's lobby is v%s, you have v%s."):format(Short(sender), a or "?", VERSION), "OK", nil, sender, TOASTTIME)
+			end
 			return
 		end
 		-- A re-announce: already in (or joining) this lobby, so no popup
 		if lobby and lobby.host == sender and (joining == sender or InRoster(lobby.players, Me())) then return end
+		if not frame.JoinPopups() then
+			Print(Short(sender) .. " opened a lobby. Type /gs to join.")
+			return
+		end
 		ShowToast(Short(sender) .. " opened a Goblin Shellshock lobby.", "Join", function()
 			if InCombatLockdown() then Print("Not available in combat.") return end
 			joining = sender
@@ -3829,7 +3853,9 @@ local function OnMessage(msg, sender)
 		lobbyFrame:Hide()
 		HideToast(sender)
 		StartGame(tonumber(b), roster, c == "t", RULEDEFS.Copy(hostRules[sender] or PRESETS[1]), false, sender)
-		if game.spectating then
+		if game.spectating and not frame.JoinPopups() then
+			Print(Short(sender) .. "'s match has started. Type /gs to watch.")
+		elseif game.spectating then
 			ShowToast(Short(sender) .. "'s match has started.", "Spectate", function() frame:Show() end, sender, TOASTTIME)
 		end
 	elseif cmd == "RULES" then
@@ -3855,7 +3881,11 @@ local function OnMessage(msg, sender)
 		if a ~= Me() then return end
 		lobbyFrame.scanning = nil
 		if c == "l" then
-			OnMessage("HELLO:" .. (b or "?"), sender) -- same Join popup as a fresh lobby, worded for a lobby that's been up a while
+			-- Same Join popup as a fresh lobby, worded for a lobby that's been up a while. We asked
+			-- for it, so it shows even with the automatic popups off.
+			frame.forceJoin = true
+			OnMessage("HELLO:" .. (b or "?"), sender)
+			frame.forceJoin = nil
 			if b == VERSION then toast.text:SetText(Short(sender) .. " has a lobby open. Want to join?") end
 		elseif c == "m" then
 			groupHost = sender
@@ -4004,6 +4034,7 @@ driver:SetScript("OnEvent", function(_, event, prefix, msg, _, sender)
 				lobbyFrame:SetScale(GoblinShellshockDB.lobbyScale)
 				lobbyFrame.SyncScale()
 			end
+			frame.InitMinimap()
 		end
 		return
 	elseif event == "PLAYER_REGEN_ENABLED" then
@@ -4080,6 +4111,20 @@ local function AnimateTanks(e)
 				Particle("smoke", v.x + back, v.y + 11, back * 0.6, random(12, 22), 1, 2, 6, 0.3)
 			end
 
+			-- Damage smoke from the hull once it's lost 15% health: more, bigger and blacker the closer
+			-- it is to dying, with embers in it at the end
+			local hurt = t.alive and v.alive and 1 - t.hp / game.rules.hp or 0
+			v.smoke = (v.smoke or 0) - e
+			if hurt > 0.15 and v.smoke <= 0 then
+				v.smoke = (0.9 - 0.75 * hurt) * (0.8 + random() * 0.4)
+				local g = 0.5 - 0.42 * hurt
+				Particle("smoke", v.x + random(-4, 4), v.y + 8, random(-6, 6), 14 + 12 * hurt,
+					1.2 + 1.3 * hurt, 4 + 6 * hurt, 10 + 22 * hurt, 0.25 + 0.4 * hurt, { g, g, g * 1.05 })
+				if hurt > 0.75 and random() < 0.35 then
+					Particle("ember", v.x + random(-3, 3), v.y + 8, random(-15, 15), random(30, 60), 0.5, 2, 1, 0.9)
+				end
+			end
+
 			-- On a jetpack the flight (or its replay) places the tank instead
 			if not frame.JetVis(v, e) then
 				-- Glides at a steady speed along the ground, so it goes slower across while on a slope.
@@ -4099,8 +4144,9 @@ local function AnimateTanks(e)
 					v.warp = nil
 				end
 				-- Resting spot: the sim height when parked (it can be below the dirt when buried)
-				local ground = v.x == t.x and min(hv[t.col], t.y) or GroundAt(v.x)
-				if v.y > ground + 0.5 then
+				local ground = v.x == t.x and min(hv[t.col], t.y) or field.SmoothGround(v.x)
+				-- Downhill it follows the ground; only a drop taller than a climb (or one already under way) is a fall
+				if v.y > ground + CLIMB + 1 or (v.fy > 0 and v.y > ground + 0.5) then
 					v.fy = v.fy + FALLG * e
 					v.y = max(ground, v.y - v.fy * e)
 					if v.y == ground then
@@ -4581,7 +4627,9 @@ SlashCmdList.GOBLINSHELLSHOCK = function(msg)
 		and not InRoster(lobby.players, Me()) then
 		-- Someone else's lobby we never joined (the popup was closed): offer the Join popup again
 		local host = lobby.host
+		frame.forceJoin = true
 		OnMessage("HELLO:" .. VERSION, host)
+		frame.forceJoin = nil
 		toast.text:SetText(Short(host) .. " has a lobby open. Want to join?")
 	elseif lobby then
 		ShowLobby()
@@ -4600,7 +4648,63 @@ SlashCmdList.GOBLINSHELLSHOCK = function(msg)
 	end
 end
 
--- Command list under Options > AddOns. The text is only built the first time the page opens.
+-- Minimap button (LibDBIcon). Left-click does what /gs does: finds the group's lobby or match, or
+-- opens yours. Right-click hosts one (a solo lobby outside a group). Shift-right-click hides it.
+-- The icon switches to a burning one while a lobby or match is up in the group.
+function frame.InitMinimap()
+	local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+	local DBIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+	if not (LDB and DBIcon) then return end
+	local db = GoblinShellshockDB
+	db.minimap = db.minimap or { hide = false }
+	-- What's up in the group, if anything (solo test lobbies and matches don't count)
+	local function Busy()
+		if lobby and not lobby.solo then
+			return lobby.host == Me() and "Your lobby is open." or (Short(lobby.host) .. "'s lobby is open.")
+		elseif game and not game.solo and not game.over then
+			return game.host == Me() and "Your match is running." or (Short(game.host) .. "'s match is running.")
+		end
+		local h = OtherHost()
+		if h then return Short(h) .. " has a lobby or match up." end
+	end
+	local obj = LDB:NewDataObject("GoblinShellshock", {
+		type = "launcher",
+		label = "Goblin Shellshock",
+		icon = MEDIA .. "icon",
+		OnClick = function(_, btn)
+			if btn == "RightButton" and IsShiftKeyDown() then
+				frame.SetMinimap(false)
+				Print("Minimap button hidden. Turn it back on under Options > AddOns > Goblin Shellshock.")
+			elseif btn == "RightButton" then
+				if InCombatLockdown() then Print("Not available in combat.") return end
+				if IsInGroup() then HostStart() else SoloLobby() end
+			else
+				SlashCmdList.GOBLINSHELLSHOCK("")
+			end
+		end,
+		OnTooltipShow = function(tt)
+			tt:AddLine("Goblin Shellshock", GOLD[1], GOLD[2], GOLD[3])
+			local busy = Busy()
+			if busy then tt:AddLine(busy, 1, 0.55, 0.3) end
+			tt:AddLine("Left-click: find your group's game, or open yours", 1, 1, 1)
+			tt:AddLine("Right-click: host a game (solo outside a group)", 1, 1, 1)
+			tt:AddLine("Shift-right-click: hide this button", 0.6, 0.6, 0.6)
+		end,
+	})
+	DBIcon:Register("GoblinShellshock", obj, db.minimap)
+	function frame.SetMinimap(on)
+		db.minimap.hide = not on
+		if on then DBIcon:Show("GoblinShellshock") else DBIcon:Hide("GoblinShellshock") end
+		if frame.options and frame.options.mmCheck then frame.options.mmCheck:SetChecked(on) end
+	end
+	-- Polled, so it also catches a host leaving the group or going offline
+	C_Timer.NewTicker(1, function()
+		local icon = MEDIA .. (Busy() and "icon_live" or "icon")
+		if obj.icon ~= icon then obj.icon = icon end
+	end)
+end
+
+-- Options and the command list under Options > AddOns. Built the first time the page opens.
 if Settings and Settings.RegisterCanvasLayoutCategory then
 	frame.options = CreateFrame("Frame")
 	frame.options:SetScript("OnShow", function(self)
@@ -4608,6 +4712,22 @@ if Settings and Settings.RegisterCanvasLayoutCategory then
 		local title = self:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 		title:SetPoint("TOPLEFT", 16, -16)
 		title:SetText("Goblin Shellshock v" .. VERSION)
+		local function Check(y, label, get, set)
+			local cb = CreateFrame("CheckButton", nil, self, "UICheckButtonTemplate")
+			cb:SetPoint("TOPLEFT", 12, y)
+			cb:SetChecked(get())
+			cb:SetScript("OnClick", function(b) set(b:GetChecked() and true or false) end)
+			local fs = self:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+			fs:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+			fs:SetText(label)
+			return cb
+		end
+		Check(-44, "Pop up when someone in your group opens a lobby (/gs still finds it when off)",
+			function() return GoblinShellshockDB.joinPopups ~= false end,
+			function(on) GoblinShellshockDB.joinPopups = on end)
+		self.mmCheck = Check(-72, "Show the minimap button",
+			function() return not (GoblinShellshockDB.minimap and GoblinShellshockDB.minimap.hide) end,
+			function(on) if frame.SetMinimap then frame.SetMinimap(on) end end)
 		local cmds = {
 			{ "/gs", "In a party or raid: find the group's lobby or match. Opens the window if you're already in one." },
 			{ "/gs start", "Open a lobby for your group." },
@@ -4618,7 +4738,7 @@ if Settings and Settings.RegisterCanvasLayoutCategory then
 			{ "/gs toast", "Show the popup so you can drag it where you want it." },
 			{ "/gs toast reset", "Put the popup back in its default spot." },
 		}
-		local y = -52
+		local y = -116
 		for _, c in ipairs(cmds) do
 			local cmd = self:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 			cmd:SetPoint("TOPLEFT", 16, y)
