@@ -2,7 +2,7 @@
 ## Title: Goblin Shellshock
 ## Notes: Turn-based goblin artillery for your group
 ## Author: Knofle
-## Version: 0.55
+## Version: 0.56
 ## IconTexture: Interface\AddOns\GoblinShellshock\Media\icon
 ## SavedVariables: GoblinShellshockDB
 ## X-Wago-ID: v63Q9ZGb

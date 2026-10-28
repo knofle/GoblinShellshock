@@ -122,7 +122,7 @@ end
 -- Behaviour: split (shells at apex), pellets (spread at launch), burst/burstV/spread (bomblets on impact;
 -- carry: they fan out forward only and keep that share of the shell's sideways speed),
 -- hail (shells from the sky), roll, bounce (times), home (steers at enemies), speed (launch multiplier),
--- napalm (burn reach per blob), fuse/drops (bursts in the air after fuse seconds into burning blobs), leech (heals the damage dealt),
+-- napalm (burn reach per blob), cap (most burn damage one tank takes from a shot), fuse/drops (bursts in the air after fuse seconds into burning blobs), leech (heals the damage dealt),
 -- wall (raises a column of dirt), knock (columns a close hit shoves tanks, default 4),
 -- drill (px of earth it bores through in a straight line; the tunnel caves in).
 -- power = used from the selector instead of fired. one = crates and the shop give 1, not 2.
@@ -161,8 +161,8 @@ local WEAPONS = {
 		desc = "Fast and flat, with a laser sight. A small but strong blast." },
 	{ name = "Goblin Drill Rocket",  radius = 20, dmg = 30,  weight = 4, drill = 150, use = "Utility",
 		desc = "Bores straight through up to 150px of earth, then flies on. The tunnel caves in behind it." },
-	{ name = "Rain of Fire",         radius = 6,  dmg = 22,  weight = 4, napalm = 30, fuse = 0.9, drops = 7,
-		desc = "Bursts in the air and rains 7 burning blobs." },
+	{ name = "Rain of Fire",         radius = 6,  dmg = 12,  weight = 4, napalm = 30, fuse = 0.9, drops = 7, cap = 40,
+		desc = "Bursts in the air and rains 7 burning blobs. A tank takes at most 40 from one volley." },
 	{ name = "Drain Life",           radius = 32, dmg = 40,  weight = 4, leech = true,
 		desc = "Heals you for all the damage it deals." },
 	{ name = "Seaforium Charge",     radius = 70, dmg = 20,  weight = 5, knock = 20, use = "Utility",
@@ -2305,12 +2305,18 @@ local function Damage(x, y, r, dmg, by, knock, direct)
 end
 
 -- Napalm: falls off with horizontal distance along the ground
-local function Burn(x, y, reach, dmg, by)
+-- Falloff only halves the damage at the edge, so how many blobs land on a tank matters more than where
+local function Burn(x, y, reach, dmg, by, cap)
 	local dealt = 0
 	for _, t in ipairs(game.tanks) do
 		local dx = abs(t.x - x)
 		if t.alive and dx < reach and abs(t.y - y) <= 30 then
-			local lost = Hurt(t, floor(dmg * (reach - dx) / reach), by)
+			local amt = floor(dmg * (0.5 + 0.5 * (reach - dx) / reach))
+			if cap then
+				amt = min(amt, cap - t.burnt)
+				t.burnt = t.burnt + amt
+			end
+			local lost = Hurt(t, amt, by)
 			if t ~= by then dealt = dealt + lost end
 		end
 	end
@@ -2386,7 +2392,7 @@ local function Impact(w, x, y)
 
 	local dealt = 0
 	if w.napalm then
-		dealt = Burn(x, y, w.napalm, w.dmg, by)
+		dealt = Burn(x, y, w.napalm, w.dmg, by, w.cap)
 	elseif w.dmg then
 		dealt = Damage(x, y, w.radius, w.dmg, by, w.knock, w.direct)
 	end
@@ -2721,6 +2727,7 @@ end
 -- start and end (so 2 pairs: it dug and flew off the map, 3: it dug and blew up)
 local function Resolve(pts)
 	local w, first = game.fired, 1
+	for _, t in ipairs(game.tanks) do t.burnt = 0 end
 	if w.drill and #pts >= 4 then
 		frame.Tunnel(pts[1], pts[2], pts[3], pts[4])
 		first = 5
