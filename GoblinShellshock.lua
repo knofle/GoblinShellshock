@@ -122,10 +122,11 @@ end
 -- Behaviour: split (shells at apex), pellets (spread at launch), burst/burstV/spread (bomblets on impact),
 -- hail (shells from the sky), roll, bounce (times), home (steers at enemies), speed (launch multiplier),
 -- napalm (burn reach per blob), fuse/drops (bursts in the air after fuse seconds into burning blobs), leech (heals the damage dealt),
--- wall (raises a column of dirt), knock (columns a close hit shoves tanks, default 4).
+-- wall (raises a column of dirt), knock (columns a close hit shoves tanks, default 4),
+-- drill (px of earth it bores through in a straight line; the tunnel caves in).
 -- power = used from the selector instead of fired. one = crates and the shop give 1, not 2.
 -- price: shop price instead of the one from weight. late: crates drop it more often as rounds pass.
--- laser: a straight sight line out of the barrel while you aim it.
+-- laser: a straight sight line out of the barrel while you aim it. direct: precise hits on a tank deal more.
 local WEAPONS = {
 	{ name = "Goblin Shell",         radius = 24, dmg = 50,
 		desc = "Trusty goblin ordnance. You never run out." },
@@ -153,8 +154,10 @@ local WEAPONS = {
 		desc = "Bounces 3 times before it goes off." },
 	{ name = "Arcane Missile",       radius = 20, dmg = 29,  weight = 3, home = true,
 		desc = "Steers toward the nearest enemy on the way down." },
-	{ name = "Aimed Shot",           radius = 8,  dmg = 60,  weight = 5, speed = 1.6, knock = 10, laser = true,
+	{ name = "Aimed Shot",           radius = 8,  dmg = 65,  weight = 5, speed = 1.6, knock = 10, laser = true, direct = true,
 		desc = "Fast and flat, with a laser sight. A small but strong blast." },
+	{ name = "Goblin Drill Rocket",  radius = 20, dmg = 30,  weight = 4, drill = 150,
+		desc = "Bores straight through up to 150px of earth, then flies on. The tunnel caves in behind it." },
 	{ name = "Rain of Fire",         radius = 6,  dmg = 15,  weight = 4, napalm = 25, fuse = 0.9, drops = 7,
 		desc = "Bursts in the air and rains 7 burning blobs." },
 	{ name = "Drain Life",           radius = 32, dmg = 40,  weight = 4, leech = true,
@@ -184,7 +187,7 @@ do
 		["Explosive Sheep"] = "Spell_Nature_Polymorph",    ["Bouncing Bomb"] = "INV_Misc_Bomb_06",
 		["Arcane Missile"] = "Spell_Nature_StarFall",      ["Aimed Shot"] = "INV_Spear_07",
 		["Rain of Fire"] = "Spell_Shadow_RainOfFire",      ["Drain Life"] = "Spell_Shadow_LifeDrain02",
-		["Seaforium Charge"] = "INV_Misc_Bomb_03",
+		["Seaforium Charge"] = "INV_Misc_Bomb_03",          ["Goblin Drill Rocket"] = "Trade_Mining",
 		["Earthen Wall"] = "Spell_Nature_StoneSkinTotem",  ["Power Word: Shield"] = "Spell_Holy_PowerWordShield",
 		["Rocket Boots"] = "INV_Gizmo_RocketBoot_01",      ["Blink"] = "Spell_Arcane_Blink",
 		["Goblin Jetpack"] = "INV_Gizmo_RocketBootExtreme",
@@ -562,8 +565,8 @@ function field.Stand(tex, x, y, w, h, lean)
 	return a
 end
 
--- Laser sight for `laser` weapons: a straight red beam from the barrel tip along the aim, up to 300px,
--- stopping at the ground or the field edge. Only the shooter sees it, and only while aiming.
+-- Laser sight for `laser` weapons: a straight red beam from the barrel tip along the aim,
+-- running to the ground or the field edge. Only the shooter sees it, and only while aiming.
 field.laser = field:CreateLine(nil, "OVERLAY")
 field.laser:SetThickness(2)
 field.laser:SetColorTexture(1, 0.15, 0.1, 0.75)
@@ -580,13 +583,73 @@ function field.Laser(t, v, shown)
 	local sx = v.x - sin(tilt) * TURRET + dx * BARREL
 	local sy = v.y + cos(tilt) * TURRET + dy * BARREL
 	local len = 0
-	while len < 300 do
+	while len < W + H do
 		local px, py = sx + dx * (len + 4), sy + dy * (len + 4)
 		if px < 0 or px > W or py > H or py < GroundAt(px) then break end
 		len = len + 4
 	end
 	L:SetStartPoint("BOTTOMLEFT", field, sx, sy)
 	L:SetEndPoint("BOTTOMLEFT", field, sx + dx * len, sy + dy * len)
+end
+
+-- Drill tunnel, visual only: soft dark blobs every 4px along the drill's path, wobbled and varied in
+-- size so it reads as dug rather than ruled. Blobs shrink where the ground above them is thin, so the
+-- entry and exit holes stay inside the dirt. Once the shot is over the tunnel closes up and fades
+-- while the real cave-in settles the dirt.
+field.bore, field.boreId = {}, 0
+for i = 1, 48 do
+	local b = field:CreateTexture(nil, "ARTWORK", nil, 2)
+	b:SetTexture(MEDIA .. "glow")
+	b:SetVertexColor(0.06, 0.04, 0.02)
+	b:Hide()
+	field.bore[i] = b
+end
+-- f: 0 open, 1 closed
+function field.BoreLayout(f)
+	local x1, y1, x2, y2 = unpack(field.boreSeg)
+	local len = sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+	local dx, dy = len > 0 and (x2 - x1) / len or 0, len > 0 and (y2 - y1) / len or 0
+	local n = floor(len / 4) + 1
+	for i, b in ipairs(field.bore) do
+		local d, wob = (i - 1) * 4, sin(i * 1.7) * 1.5 + sin(i * 0.45) * 2
+		local x, y = x1 + dx * d - dy * wob, y1 + dy * d + dx * wob
+		local size = (20 + sin(i * 2.3) * 5) * (1 - 0.6 * f)
+		local r = size / 2
+		local room = (min(GroundAt(x - r), GroundAt(x), GroundAt(x + r)) - y) * 2 + 4
+		size = min(size, room)
+		if i > n or size < 5 then
+			b:Hide()
+		else
+			b:SetSize(size, size)
+			b:SetPoint("CENTER", field, "BOTTOMLEFT", x, y)
+			b:SetAlpha(0.9 * (1 - f))
+			b:Show()
+		end
+	end
+end
+function field.Bore(s)
+	local a, b = s.dig, s.tunnel
+	if not (a or b) then return end
+	if not field.boreOn or field.boreFading then
+		field.boreId = field.boreId + 1 -- stops any fade still running
+		field.boreOn, field.boreFading = true, nil
+	end
+	field.boreSeg = a and { a[1], a[2], s.x, s.y } or b
+	field.BoreLayout(0)
+end
+function field.BoreFade()
+	if not field.boreOn or field.boreFading then return end
+	field.boreId, field.boreFading = field.boreId + 1, true
+	local id, n = field.boreId, 0
+	C_Timer.NewTicker(0.03, function(tk)
+		if field.boreId ~= id then tk:Cancel() return end
+		n = n + 1
+		field.BoreLayout(n / 20)
+		if n >= 20 then
+			for _, b in ipairs(field.bore) do b:Hide() end
+			field.boreOn, field.boreFading = nil, nil
+		end
+	end, 20)
 end
 
 local vis = {}
@@ -648,6 +711,7 @@ local function HideShells()
 		sv.halo:Hide()
 		sv.body:Hide()
 	end
+	field.BoreFade()
 end
 
 local crateVis = {}
@@ -2186,14 +2250,19 @@ end
 
 -- Returns damage dealt to tanks other than `by`. Tanks are nudged away from the blast,
 -- up to `knock` columns (default 4, so 8px) for a close hit.
-local function Damage(x, y, r, dmg, by, knock)
+-- direct: a blast on a tank's hitbox deals 60-100% damage by how close it is to the hitbox centre,
+-- instead of the usual falloff.
+local function Damage(x, y, r, dmg, by, knock, direct)
 	local reach, dealt = r + TANKW / 2, 0
 	for _, t in ipairs(game.tanks) do
 		if t.alive then
 			local dx, dy = t.x - x, t.y + TANKH / 2 - y
 			local d2 = dx * dx + dy * dy
-			if d2 < reach * reach then
-				local near = (reach - sqrt(d2)) / reach
+			local onHit = direct and abs(dx) <= HITW / 2 + 2 and y >= t.y - 3 and y <= t.y + HITH + 2
+			if onHit or d2 < reach * reach then
+				local hy = t.y + HITH / 2 - y
+				local near = onHit and 1 - 0.4 * min(1, sqrt(dx * dx + hy * hy) / (HITW / 2 + 2))
+					or (reach - sqrt(d2)) / reach
 				local lost = Hurt(t, floor(dmg * near), by)
 				if t ~= by then dealt = dealt + lost end
 				if t.alive and dx ~= 0 then
@@ -2235,6 +2304,26 @@ local function Settle(by)
 	for _, p in ipairs(game.props) do p.y = h[p.col] end
 end
 
+-- Drill tunnel from (x1, y1) to (x2, y2), 16px across. Each column loses the tunnel's height once,
+-- so the earth above drops into it and anything standing there falls with it.
+function frame.Tunnel(x1, y1, x2, y2)
+	local h, lo, hi = game.h, {}, {}
+	local n = max(1, floor(sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) / 3))
+	for k = 0, n do
+		local y = floor(y1 + (y2 - y1) * k / n)
+		Circle(x1 + (x2 - x1) * k / n, 8, function(col, dy)
+			lo[col] = min(lo[col] or y - dy, y - dy)
+			hi[col] = max(hi[col] or y + dy, y + dy)
+		end)
+	end
+	for col, l in pairs(lo) do
+		l = max(0, l)
+		local hc = h[col]
+		if hc > l then h[col] = hc <= hi[col] and l or hc - (hi[col] - l) end
+	end
+	Settle(game.tanks[game.cur])
+end
+
 local Detonate
 
 -- Props caught in a blast are destroyed; mines and barrels go off in turn (chains)
@@ -2270,7 +2359,7 @@ local function Impact(w, x, y)
 	if w.napalm then
 		dealt = Burn(x, y, w.napalm, w.dmg, by)
 	elseif w.dmg then
-		dealt = Damage(x, y, w.radius, w.dmg, by, w.knock)
+		dealt = Damage(x, y, w.radius, w.dmg, by, w.knock, w.direct)
 	end
 	if w.leech and by.alive and dealt > 0 then
 		local heal = min(game.rules.hp - by.hp, dealt)
@@ -2323,7 +2412,36 @@ local function CollectNear(t, col)
 	end
 end
 
--- Drives up to n columns, one fuel each; stops at steep climbs, edges, other tanks and chasms.
+-- A tank's weight packs down a small lip it can't climb (a crater rim, a ragged blast edge): the
+-- column ahead sinks to the most it can climb, as long as neither it nor the next few columns stand
+-- more than 23px (CLIMB + 16) above the tank. Tall steps and steep slopes still stop it.
+function frame.Crush(col, dir)
+	local h, base = game.h, game.h[col]
+	for k = 1, 6 do
+		local c = col + dir * k
+		if c >= 1 and c <= NCOLS and h[c] - base > CLIMB + 16 then return end
+	end
+	h[col + dir] = base + CLIMB
+	-- Rounds off the rim beyond it: the next few columns ease down toward their neighbours (never up)
+	for k = 2, 4 do
+		local c = col + dir * k
+		if c >= 2 and c < NCOLS then h[c] = min(h[c], floor((h[c - 1] + h[c] * 2 + h[c + 1]) / 4)) end
+	end
+	Dust((col + dir - 0.5) * COLW, base + CLIMB, 3)
+	return true
+end
+
+-- Thin spikes under the hull (a column or two standing over 3px above the ground 2 columns either
+-- side, and poking up into the tank at height y) get flattened to 2px above that ground
+function frame.Flatten(col, y)
+	local h = game.h
+	for c = max(3, col - 4), min(NCOLS - 2, col + 4) do
+		local around = max(h[c - 2], h[c + 2])
+		if h[c] > y and h[c] - around > 3 then h[c] = around + 2 end
+	end
+end
+
+-- Drives up to n columns, one fuel each; stops at steep climbs it can't crush, edges, other tanks and chasms.
 -- Driving onto a land mine stops the tank there and sets it off; driving into a teleporter stops
 -- it there and warps it. Returns the columns driven, and whether a mine or teleporter stopped it.
 local function MoveTank(t, dir, n)
@@ -2331,9 +2449,11 @@ local function MoveTank(t, dir, n)
 	if h[col] - t.y >= TANKH then return 0 end -- fully buried: shoot your way out
 	for _ = 1, min(n, t.fuel) do
 		local nx = col + dir
-		if nx < 5 or nx > NCOLS - 4 or h[nx] - h[col] > CLIMB or Blocked(t, nx) then break end
+		if nx < 5 or nx > NCOLS - 4 or Blocked(t, nx) then break end
+		if h[nx] - h[col] > CLIMB and not frame.Crush(col, dir) then break end
 		col, moved = nx, moved + 1
 		if h[col] <= 0 then break end -- a chasm down to the bottom: you drive in and fall out
+		frame.Flatten(col, h[col])
 		CollectNear(t, col)
 		for _, p in ipairs(game.props) do
 			if p.alive and PROPS[p.kind].trigger and abs(p.col - col) <= 4 then mine = p end
@@ -2568,9 +2688,15 @@ function frame.AfterShot()
 	DrawAll()
 end
 
--- pts is a flat list x1, y1, x2, y2, ...
+-- pts is a flat list x1, y1, x2, y2, ... A drill shot that dug leads with its tunnel's
+-- start and end (so 2 pairs: it dug and flew off the map, 3: it dug and blew up)
 local function Resolve(pts)
-	for i = 1, #pts - 1, 2 do Impact(game.fired, pts[i], pts[i + 1]) end
+	local w, first = game.fired, 1
+	if w.drill and #pts >= 4 then
+		frame.Tunnel(pts[1], pts[2], pts[3], pts[4])
+		first = 5
+	end
+	for i = first, #pts - 1, 2 do Impact(w, pts[i], pts[i + 1]) end
 	return Checksum()
 end
 
@@ -2632,6 +2758,23 @@ local function StepShell(s, w)
 		s.col, s.x, s.y = nx, (nx - 0.5) * COLW, h[nx]
 		return
 	end
+	if s.dig then
+		-- Boring: a straight line with no gravity or wind, until it breaks out or the drill is spent
+		s.x, s.y = s.x + s.vx * STEP, s.y + s.vy * STEP
+		s.steps = s.steps + 1
+		s.dug = s.dug + sqrt(s.vx * s.vx + s.vy * s.vy) * STEP
+		local stop = s.x < 0 or s.x >= W or s.y <= 2 or s.dug >= w.drill
+			or HitsSolid(s.x, s.y, s.steps <= 10 and game.tanks[game.cur])
+		if stop or s.y > h[floor(s.x / COLW) + 1] then
+			s.x = max(0, min(W - 1, s.x))
+			s.tunnel = { s.dig[1], s.dig[2], floor(s.x + 0.5), max(0, floor(s.y + 0.5)) }
+			s.dig, s.drilled = nil, true
+			if stop then return "hit" end
+		elseif random() < 0.4 then
+			Particle("dirt", s.x, s.y, random(-40, 40), random(20, 90), 0.6, 3, 3, 1)
+		end
+		return
+	end
 	if w.home and s.vy < 0 then
 		local me, best = game.tanks[game.cur], nil
 		for _, t in ipairs(game.tanks) do
@@ -2656,6 +2799,11 @@ local function StepShell(s, w)
 		if w.roll then
 			s.roll, s.col, s.dir, s.m, s.tick = true, col, s.vx < 0 and -1 or 1, 20, 0
 			s.x, s.y = (col - 0.5) * COLW, h[col]
+			return
+		end
+		if w.drill and not s.drilled then
+			s.dig, s.dug = { floor(s.x + 0.5), max(0, floor(s.y + 0.5)) }, 0
+			s.vx, s.vy = s.vx * 0.7, s.vy * 0.7
 			return
 		end
 		if w.bounce and (s.bounces or 0) < w.bounce then
@@ -2692,6 +2840,9 @@ local function StepShot(shot)
 		local s = shells[i]
 		local r = StepShell(s, w)
 		if r then
+			if s.tunnel then
+				for _, v in ipairs(s.tunnel) do tinsert(shot.impacts, v) end
+			end
 			if r == "hit" then
 				local x, y = floor(s.x + 0.5), max(0, floor(s.y + 0.5))
 				tinsert(shot.impacts, x)
@@ -4342,6 +4493,7 @@ frame.ticker:SetScript("OnUpdate", function(self, elapsed)
 					s.bounced = nil
 					Dust(s.x, s.y, 4)
 				end
+				field.Bore(s)
 				if push and s.blob then
 					Particle("flame", s.x, s.y, random(-5, 5), random(0, 10), 0.35, 6, 2, 0.8)
 				elseif push then
