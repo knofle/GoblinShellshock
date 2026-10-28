@@ -1,8 +1,8 @@
-## Interface: 120007, 120100
+## Interface: 120105, 120107, 16001
 ## Title: Goblin Shellshock
 ## Notes: Turn-based goblin artillery for your group
 ## Author: Knofle
-## Version: 0.51
+## Version: 0.52
 ## IconTexture: Interface\AddOns\GoblinShellshock\Media\icon
 ## SavedVariables: GoblinShellshockDB
 ## X-Wago-ID: v63Q9ZGb
