@@ -2,10 +2,11 @@
 ## Title: Goblin Shellshock
 ## Notes: Turn-based goblin artillery for your group
 ## Author: Knofle
-## Version: 0.57
+## Version: 0.58
 ## IconTexture: Interface\AddOns\GoblinShellshock\Media\icon
 ## SavedVariables: GoblinShellshockDB
 ## X-Wago-ID: v63Q9ZGb
+## X-Curse-Project-ID: 1771359
 
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua

@@ -48,15 +48,15 @@ local SKIES = {
 }
 
 -- Rule presets the host picks in the lobby; every value can then be tweaked (RULEDEFS).
--- gain/moves: moves per turn and the most you can store; dist: columns per move;
+-- gain/moves: moves per turn and the most you can store (RULEDEFS.DIST columns each);
 -- crates: on average one crate per this many rounds (0 = off); start: random items each tank begins with;
 -- shop: 30s shop before the match with `gold` to spend.
 local PRESETS = {
-	{ name = "Classic", hp = 100, time = 20, gain = 1, moves = 3, dist = 15, crates = 3, wind = 20, start = 0, shop = 0, gold = 100,
+	{ name = "Classic", hp = 100, time = 20, gain = 1, moves = 3, crates = 3, wind = 20, start = 0, shop = 0, gold = 100,
 		desc = "100 HP, 20s shots, about 1 crate per 3 rounds." },
-	{ name = "Quick",   hp = 60,  time = 12, gain = 1, moves = 3, dist = 15, crates = 2, wind = 20, start = 0, shop = 0, gold = 100,
+	{ name = "Quick",   hp = 60,  time = 12, gain = 1, moves = 3, crates = 2, wind = 20, start = 0, shop = 0, gold = 100,
 		desc = "60 HP, 12s shots, about 1 crate per 2 rounds." },
-	{ name = "Arsenal", hp = 100, time = 20, gain = 1, moves = 3, dist = 15, crates = 6, wind = 20, start = 4, shop = 0, gold = 100,
+	{ name = "Arsenal", hp = 100, time = 20, gain = 1, moves = 3, crates = 6, wind = 20, start = 4, shop = 0, gold = 100,
 		desc = "Start with 4 random items, fewer crates." },
 }
 
@@ -66,15 +66,17 @@ local PRESETS = {
 local RULEDEFS = {
 	{ key = "hp",     label = "Tank HP",        lo = 20, hi = 300, step = 10, cat = "Tanks" },
 	{ key = "time",   label = "Shot time",      lo = 5,  hi = 60,  step = 5, fmt = "%ds" },
-	-- Fuel for driving, in moves: each move is worth Move distance columns
-	{ key = "gain",   label = "Fuel per turn", lo = 0,  hi = 3,   step = 1,
-		names = { "None", "Some", "Medium", "Lots" } },
+	-- Fuel for driving, in moves: each move is worth RULEDEFS.DIST columns
+	-- Fuel per turn 4 = unlimited: the tank fills right up every turn and Max fuel doesn't apply
+	{ key = "gain",   label = "Fuel per turn", lo = 0,  hi = 4,   step = 1,
+		names = { "None", "Some", "Medium", "Lots", "Unlimited" } },
 	{ key = "moves",  label = "Max fuel",      lo = 0,  hi = 9,   step = 1, vals = { 0, 1, 2, 3, 5, 7, 9 },
 		names = { "None", "Little", "Some", "Medium", "Decent", "Lots", "Full tank" } },
-	{ key = "dist",   label = "Move distance",   lo = 5,  hi = 40,  step = 5 },
 	{ key = "crates", label = "Crates",         lo = 0,  hi = 10,  step = 1, fmt = "~1 per %d rounds", zero = "Off", cat = "Items" },
 	{ key = "start",  label = "Start items",    lo = 0,  hi = 8,   step = 1 },
 	{ key = "shop",   label = "Shop",           lo = 0,  hi = 1,   step = 1, fmt = "On", zero = "Off", toggle = true },
+	-- Bit k-1 set = WEAPONS[k] is banned. hi is set once WEAPONS is defined; edit: a button opening the list
+	{ key = "ban",    label = "Banned items",   lo = 0,  hi = 0,   step = 1, edit = true },
 	{ key = "gold",   label = "Shop gold",      lo = 50, hi = 300, step = 25, fmt = "%dg" },
 	{ key = "wind",   label = "Max wind",       lo = 0,  hi = 40,  step = 5, zero = "Calm", cat = "Battlefield" },
 	{ key = "mix",    label = "Team spawns",    lo = 0,  hi = 1,   step = 1, fmt = "Mixed", zero = "Sides" },
@@ -84,6 +86,9 @@ local RULEDEFS = {
 	{ key = "terrain", label = "Terrain",       lo = 0,  hi = 5,   step = 1, zero = "Random",
 		list = { "Hills", "Mountain", "Valley", "Mesas", "Twin peaks" } },
 }
+
+-- Columns of driving per move of fuel (no longer a lobby setting)
+RULEDEFS.DIST = 22
 
 -- Position of v in d.vals (or in lo..hi by step): the last one not above v
 function RULEDEFS.Index(d, v)
@@ -99,7 +104,16 @@ function RULEDEFS.Step(d, v, dir)
 	return max(d.lo, min(d.hi, v + dir * d.step))
 end
 
+-- Banned items: whether item i is banned in rules r, and a ban mask with item i flipped
+function RULEDEFS.Banned(r, i) return floor((r.ban or 0) / 2 ^ (i - 1)) % 2 == 1 end
+function RULEDEFS.FlipBan(r, i) return (r.ban or 0) + (RULEDEFS.Banned(r, i) and -1 or 1) * 2 ^ (i - 1) end
+
 function RULEDEFS.Show(d, v)
+	if d.edit then
+		local n = 0
+		while v > 0 do n, v = n + v % 2, floor(v / 2) end
+		return n == 0 and "None" or n == 1 and "1 item" or n .. " items"
+	end
 	if d.names then return d.names[RULEDEFS.Index(d, v)] end
 	if v == 0 and d.zero then return d.zero end
 	if d.key == "sky" then return SKIES[v].name end
@@ -116,7 +130,7 @@ function RULEDEFS.Copy(src)
 end
 
 -- Index of the preset these rules match (map look and team spawns ignored), or nil for custom
-RULEDEFS.KEEP = { sky = true, mix = true, zone = true, terrain = true }
+RULEDEFS.KEEP = { sky = true, mix = true, zone = true, terrain = true, ban = true }
 function RULEDEFS.Preset(r)
 	for k, p in ipairs(PRESETS) do
 		local same = true
@@ -154,6 +168,7 @@ end
 -- use: the shop group (Utility, Defensive, Movement); Offensive when left out.
 -- price: shop price instead of the one from weight. late: crates drop it more often as rounds pass.
 -- laser: a straight sight line out of the barrel while you aim it. direct: precise hits on a tank deal more.
+-- calm: wind doesn't push it. tint: colour of the shell's glow, trail and blast (visual only).
 local WEAPONS = {
 	{ name = "Goblin Shell",         radius = 24, dmg = 50,
 		desc = "Trusty goblin ordnance. You never run out." },
@@ -170,33 +185,33 @@ local WEAPONS = {
 	{ name = "Scatter Shot",         radius = 10, dmg = 20,  weight = 7, pellets = 5,
 		desc = "Fires 5 pellets in a narrow spread." },
 	{ name = "Iron Grenade Cluster", radius = 16, dmg = 30,  weight = 4, burst = 6, burstV = 100, spread = 40, carry = 0.3,
-		desc = "Scatters 6 grenades around the impact." },
+		desc = "Scatters 6 grenades on impact." },
 	{ name = "Molten Eruption",      radius = 14, dmg = 25,  weight = 4, burst = 6, burstV = 260, spread = 50,
 		desc = "Erupts 6 molten blobs high into the air on impact." },
-	{ name = "Blizzard",             radius = 16, dmg = 30,  weight = 3, hail = 5,
+	{ name = "Blizzard",             radius = 16, dmg = 30,  weight = 3, hail = 5, tint = { 0.6, 0.85, 1 },
 		desc = "Calls 5 ice shards down from the sky over the impact." },
 	{ name = "Explosive Sheep",      radius = 24, dmg = 50,  weight = 8, roll = true,
-		desc = "Lands, then trots downhill and explodes." },
+		desc = "Lands, then trots downhill and explodes (It's a tumbling tank shell, not a sheep)." },
 	{ name = "Bouncing Bomb",        radius = 22, dmg = 45,  weight = 7, bounce = 3,
 		desc = "Bounces 3 times before it goes off." },
 	{ name = "Arcane Missile",       radius = 20, dmg = 29,  weight = 3, home = true,
 		desc = "Steers toward the nearest enemy on the way down." },
-	{ name = "Aimed Shot",           radius = 8,  dmg = 65,  weight = 5, speed = 1.6, knock = 10, laser = true, direct = true,
-		desc = "Fast and flat, with a laser sight. A small but strong blast." },
+	{ name = "Aimed Shot",           radius = 8,  dmg = 65,  weight = 5, speed = 1.6, knock = 10, laser = true, direct = true, calm = true,
+		desc = "Fast and fairly flat, with a laser sight. Ignores wind, but is still affected by gravity." },
 	{ name = "Goblin Drill Rocket",  radius = 20, dmg = 30,  weight = 4, drill = 150, use = "Utility",
-		desc = "Bores straight through up to 150px of earth, then flies on. The tunnel caves in behind it." },
+		desc = "Bores in a straight line through the ground. If it makes it through to the other side, it keeps going." },
 	{ name = "Rain of Fire",         radius = 6,  dmg = 12,  weight = 4, napalm = 30, fuse = 0.9, drops = 7, cap = 40,
-		desc = "Bursts in the air and rains 7 burning blobs. A tank takes at most 40 from one volley." },
+		desc = "Bursts in the air and rains 7 burning blobs." },
 	{ name = "Drain Life",           radius = 32, dmg = 40,  weight = 4, leech = true,
 		desc = "Heals you for all the damage it deals." },
 	{ name = "Seaforium Charge",     radius = 70, dmg = 20,  weight = 5, knock = 20, use = "Utility",
-		desc = "Blasts a huge crater but deals little damage. Throws tanks far." },
+		desc = "Blasts a huge crater but deals little damage." },
 	{ name = "Earthen Wall",         radius = 10,            weight = 6, wall = 70, use = "Defensive",
 		desc = "Raises a tall wall of earth to hide behind." },
 	{ name = "Power Word: Shield",   power = "shield",   weight = 5, use = "Defensive",
 		desc = "Absorbs the next 60 damage you take." },
 	{ name = "Rocket Boots",         power = "moves",    weight = 6, price = 5, late = true, use = "Movement",
-		desc = "Adds a good splash of fuel for driving, even past a full tank." },
+		desc = "Adds a good splash of fuel, even past a full tank, and doubles your driving speed for the turn." },
 	{ name = "Blink",                power = "teleport", weight = 4, late = true, use = "Movement",
 		desc = "Teleport to a spot you click on the field." },
 	{ name = "Goblin Jetpack",       power = "jet",      weight = 4, price = 15, late = true, use = "Movement",
@@ -220,6 +235,9 @@ do
 		["Goblin Jetpack"] = "INV_Gizmo_RocketBootExtreme",
 	}
 	for _, w in ipairs(WEAPONS) do w.icon = ICONS[w.name] or "INV_Misc_QuestionMark" end
+end
+for _, d in ipairs(RULEDEFS) do
+	if d.key == "ban" then d.hi = 2 ^ #WEAPONS - 1 end
 end
 
 -- Inline icon escape for font strings, borders trimmed
@@ -781,6 +799,7 @@ local propVis = {} -- textures reused across matches, filled in StartGame
 local KINDS = {
 	smoke = { tex = "glow", c = { 0.45, 0.45, 0.48 }, grav = -25, drift = true },
 	dust  = { tex = "glow", c = { 0.5, 0.4, 0.28 }, grav = -10, drift = true },
+	blast = { tex = "glow", c = { 0.72, 0.7, 0.68 }, grav = -15, drag = 4 }, -- muzzle smoke: bursts out, then hangs
 	fire  = { tex = "glow", blend = "ADD", c = { 1, 0.55, 0.15 } },
 	flame = { tex = "glow", blend = "ADD", c = { 1, 0.45, 0.1 }, grav = -40 },
 	flash = { tex = "glow", blend = "ADD", c = { 1, 0.95, 0.7 } },
@@ -832,19 +851,21 @@ end
 
 local shakeT, shakeA = 0, 0
 
-local function Explosion(x, y, r, dirt)
+-- tint: colours the fire, flash, ring and embers instead of orange (a weapon's tint)
+local function Explosion(x, y, r, dirt, tint)
 	if dirt then
 		for _ = 1, 14 do Particle("dirt", x, y, random(-80, 80), random(40, 200), 1, 3, 3, 1) end
 		for _ = 1, 4 do Particle("dust", x + random(-r, r) / 2, y, random(-20, 20), random(5, 20), 1.2, r * 0.6, r * 1.4, 0.5) end
 		return
 	end
-	Particle("flash", x, y, 0, 0, 0.12, r * 3, r * 4, 1)
-	Particle("fire", x, y, 0, 0, 0.45, r * 1.2, r * 2.8, 1)
-	Particle("ring", x, y, 0, 0, 0.35, r * 0.6, r * 3, 0.8)
+	Particle("flash", x, y, 0, 0, 0.12, r * 3, r * 4, 1, tint)
+	Particle("fire", x, y, 0, 0, 0.45, r * 1.2, r * 2.8, 1, tint)
+	Particle("ring", x, y, 0, 0, 0.35, r * 0.6, r * 3, 0.8, tint)
 	for _ = 1, 8 + floor(r / 3) do
 		local a, s = rad(random(20, 160)), random(80, 240)
 		local size = 2 + random() * 2
-		Particle(random() < 0.6 and "dirt" or "ember", x, y, cos(a) * s, sin(a) * s, 0.6 + random() * 0.5, size, size, 1)
+		local ember = random() >= 0.6
+		Particle(ember and "ember" or "dirt", x, y, cos(a) * s, sin(a) * s, 0.6 + random() * 0.5, size, size, 1, ember and tint or nil)
 	end
 	for _ = 1, 4 do
 		Particle("smoke", x + random(-r, r) / 2, y + random(0, r) / 2, random(-15, 15), random(10, 30), 1.4 + random() * 0.6, r * 0.5, r * 1.5, 0.45)
@@ -868,8 +889,11 @@ do
 		return t
 	end
 	wx.stars = Tex("BACKGROUND", -7)
-	wx.stars:SetTexture(MEDIA .. "stars", "REPEAT", "CLAMP")
+	-- 256x128, tiled both ways at 1:1 so the stars stay round
+	wx.stars:SetTexture(MEDIA .. "stars", "REPEAT", "REPEAT")
 	wx.stars:SetAllPoints()
+	-- Fading toward the horizon, as if through thicker air
+	wx.stars:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0.1), CreateColor(1, 1, 1, 1))
 	wx.sun = Tex("BACKGROUND", -7, "sun")
 	wx.sun:SetSize(90, 90)
 	wx.sun:SetBlendMode("ADD")
@@ -905,7 +929,7 @@ do
 		wx.sky = sky
 		wx.stars:SetShown(sky.stars ~= nil)
 		wx.stars:SetAlpha(sky.stars or 0)
-		wx.stars:SetTexCoord(0, W / 256, 0, 1)
+		wx.stars:SetTexCoord(0, W / 256, 0, H / 128)
 		wx.sun:SetShown(sky.sun ~= nil)
 		if sky.sun then
 			wx.sun:SetVertexColor(sky.sun[1], sky.sun[2], sky.sun[3])
@@ -1011,7 +1035,7 @@ end
 
 -- Shown where a shell lands; the sim applies the authoritative impacts later
 local function ImpactFx(w, x, y)
-	if w.napalm then NapalmFx(x, y, w.napalm) else Explosion(x, y, w.radius, w.wall) end
+	if w.napalm then NapalmFx(x, y, w.napalm) else Explosion(x, y, w.radius, w.wall, w.tint) end
 end
 
 -- Tank destroyed: big blast, a few follow-up pops, wreck chunks in the tank's colour
@@ -1190,6 +1214,48 @@ local function DrawScores()
 	sb:Show()
 end
 
+-- Item buttons on `parent`, grouped by use, each under a small heading. Offensive fills both columns
+-- across the top; below it Utility and Defensive stack on the left, Movement sits on the right.
+-- crates: include crate-only items. Used by the shop and the lobby's ban list. Returns the buttons
+-- (b.idx = item, b.name = its label) for the caller to add the rest, and the y just below the lowest row.
+function frame.ItemGrid(parent, crates)
+	local list, y, band, low = {}, -32, -32, -32
+	for _, group in ipairs({ "Offensive", "Utility", "Defensive", "Movement" }) do
+		local x, cols, k = 12, group == "Offensive" and 2 or 1, 0
+		if group == "Utility" then band = y end
+		if group == "Movement" then x, y = 284, band end
+		local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		label:SetPoint("TOPLEFT", x + 2, y - 1)
+		label:SetText(group)
+		y = y - 13
+		for i, w in ipairs(WEAPONS) do
+			if w.weight and (crates or not w.crate) and (w.use or "Offensive") == group then
+				k = k + 1
+				local b = CreateFrame("Button", nil, parent)
+				b:SetSize(264, 15)
+				b:SetPoint("TOPLEFT", x + (k - 1) % cols * 272, y - floor((k - 1) / cols) * 16)
+				b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+				local bg = b:CreateTexture(nil, "BACKGROUND")
+				bg:SetAllPoints()
+				bg:SetColorTexture(0.1, 0.1, 0.11)
+				local hl = b:CreateTexture(nil, "HIGHLIGHT")
+				hl:SetAllPoints()
+				hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
+				b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+				b.name:SetPoint("LEFT", 6, 0)
+				b.name:SetText(WEAPONS.Icon(w, 14) .. " " .. w.name)
+				local r, g, bl = Rarity(w)
+				b.name:SetTextColor(r, g, bl)
+				b.idx = i
+				list[#list + 1] = b
+			end
+		end
+		y = y - floor((k + cols - 1) / cols) * 16
+		low = min(low, y)
+	end
+	return list, low
+end
+
 -- Shop (before the match when the Shop rule is on). Left click buys, right click sells back.
 -- Lists every crate item; the cart is local until Ready or the timer runs out.
 local shop = CreateFrame("Frame", nil, frame)
@@ -1212,52 +1278,18 @@ do
 	shop.gold = shop:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	shop.gold:SetPoint("RIGHT", shop.clock, "LEFT", -16, 0)
 
-	-- Grouped by use, each under a small heading. Offensive fills both columns across the top;
-	-- below it Utility and Defensive stack on the left, Movement sits on the right.
-	shop.items = {}
-	local n, y, band = 0, -32, -32
-	for _, group in ipairs({ "Offensive", "Utility", "Defensive", "Movement" }) do
-		local x, cols, k = 12, group == "Offensive" and 2 or 1, 0
-		if group == "Utility" then band = y end
-		if group == "Movement" then x, y = 284, band end
-		local label = shop:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-		label:SetPoint("TOPLEFT", x + 2, y - 1)
-		label:SetText(group)
-		y = y - 13
-		for i, w in ipairs(WEAPONS) do
-			if w.weight and not w.crate and (w.use or "Offensive") == group then
-				n, k = n + 1, k + 1
-				local b = CreateFrame("Button", nil, shop)
-				b:SetSize(264, 15)
-				b:SetPoint("TOPLEFT", x + (k - 1) % cols * 272, y - floor((k - 1) / cols) * 16)
-				b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-				local bg = b:CreateTexture(nil, "BACKGROUND")
-				bg:SetAllPoints()
-				bg:SetColorTexture(0.1, 0.1, 0.11)
-				local hl = b:CreateTexture(nil, "HIGHLIGHT")
-				hl:SetAllPoints()
-				hl:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.12)
-				b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-				b.name:SetPoint("LEFT", 6, 0)
-				b.name:SetText(WEAPONS.Icon(w, 14) .. " " .. w.name)
-				local r, g, bl = Rarity(w)
-				b.name:SetTextColor(r, g, bl)
-				b.price = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-				b.price:SetPoint("RIGHT", -6, 0)
-				b.price:SetText(Price(w) .. "g")
-				b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-				b.count:SetPoint("RIGHT", -40, 0)
-				b.idx = i
-				b:SetScript("OnClick", function(self, btn) shop.Pick(self.idx, btn == "RightButton") end)
-				b:SetScript("OnEnter", function(self)
-					local wp = WEAPONS[self.idx]
-					shop.desc:SetText(wp.name .. ": |cffffffff" .. wp.desc .. "|r")
-				end)
-				b:SetScript("OnLeave", function() shop.desc:SetText("") end)
-				shop.items[n] = b
-			end
-		end
-		y = y - floor((k + cols - 1) / cols) * 16
+	shop.items = frame.ItemGrid(shop)
+	for _, b in ipairs(shop.items) do
+		b.price = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		b.price:SetPoint("RIGHT", -6, 0)
+		b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		b.count:SetPoint("RIGHT", -40, 0)
+		b:SetScript("OnClick", function(self, btn) shop.Pick(self.idx, btn == "RightButton") end)
+		b:SetScript("OnEnter", function(self)
+			local wp = WEAPONS[self.idx]
+			shop.desc:SetText(wp.name .. ": |cffffffff" .. wp.desc .. "|r")
+		end)
+		b:SetScript("OnLeave", function() shop.desc:SetText("") end)
 	end
 
 	shop.desc = shop:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -1293,7 +1325,7 @@ do
 			for j = #cart, 1, -1 do
 				if cart[j] == k then tremove(cart, j) break end
 			end
-		elseif shop.Room(k) and shop.Spent() + Price(WEAPONS[k]) <= game.rules.gold then
+		elseif not RULEDEFS.Banned(game.rules, k) and shop.Room(k) and shop.Spent() + Price(WEAPONS[k]) <= game.rules.gold then
 			tinsert(cart, k)
 		end
 		shop.Draw()
@@ -1306,8 +1338,10 @@ do
 			local have = 0
 			for _, k in ipairs(shop.cart) do if k == b.idx then have = have + 1 end end
 			local w = WEAPONS[b.idx]
+			local banned = RULEDEFS.Banned(game.rules, b.idx)
 			b.count:SetText(have > 0 and ("x" .. have * ((w.power or w.one) and 1 or CRATEAMMO)) or "")
-			b:SetAlpha((have > 0 or (Price(w) <= left and shop.Room(b.idx))) and 1 or 0.4)
+			b.price:SetText(banned and "|cffff5040Banned|r" or (Price(w) .. "g"))
+			b:SetAlpha(not banned and (have > 0 or (Price(w) <= left and shop.Room(b.idx))) and 1 or 0.4)
 		end
 	end
 
@@ -1596,7 +1630,7 @@ local function DrawStatus()
 		frame.after:SetText(wait)
 	end
 
-	local cap = max(1, game.rules.moves * game.rules.dist)
+	local cap = max(1, game.rules.moves * RULEDEFS.DIST)
 	hud.fuelFill:SetWidth(max(0.1, 48 * min(1, t.fuel / cap)))
 	hud.fuelFill:SetShown(t.fuel > 0)
 
@@ -1716,6 +1750,8 @@ end)
 -- duration nil keeps the toast up until closed (used for the move preview)
 local function ShowToast(text, label, fn, owner, duration)
 	toast.text:SetText(text)
+	-- Grows downward for longer text, so it never runs under the button
+	toast:SetHeight(max(76, 28 + toast.text:GetStringHeight() + 8 + 30))
 	toast.btn.label:SetText(label)
 	toast.action, toast.owner = fn, owner
 	toast.expire = duration and GetTime() + duration
@@ -1850,6 +1886,7 @@ do
 	L.hint = L:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 	local below = -126 - MAXPLAYERS * 25 -- first free spot under the player rows
 	L.hint:SetPoint("TOP", L, "TOPLEFT", LW / 2, below - 4)
+	L.hint:SetWidth(LW - 16) -- wide fonts wrap instead of running out of the window
 
 	-- Solo only: add or remove hotseat tanks
 	L.less = FlatButton(L, half, 20, "- Tank")
@@ -1906,8 +1943,9 @@ do
 		local more = FlatButton(L, 18, 18, ">")
 		more:SetPoint("TOPLEFT", LW + 116 + 18 + 86, y)
 		L.rules[k] = { label = label, less = less, more = more, val = val }
-		if d.toggle then
+		if d.toggle or d.edit then
 			-- One button across the arrows and the value; non-hosts see the plain value instead
+			-- (an edit button shows for everyone, so they can look at the list)
 			local tog = FlatButton(L, 18 + 86 + 18, 18)
 			tog:SetPoint("TOPLEFT", LW + 116, y)
 			L.rules[k].toggle = tog
@@ -1951,17 +1989,19 @@ local function DrawLobby()
 		row.more:SetShown(host and not row.toggle)
 		if row.toggle then
 			row.toggle:SetText(RULEDEFS.Show(d, v))
-			row.toggle:SetShown(host)
-			row.val:SetShown(not host)
+			row.toggle:SetShown(host or d.edit)
+			row.val:SetShown(not (host or d.edit))
 		end
 		row.less:SetEnabled(v > d.lo)
 		row.more:SetEnabled(v < d.hi)
 		local dim = (d.key == "gold" and rules.shop == 0) or (d.key == "mix" and not teams)
+			or (d.key == "moves" and rules.gain >= 4)
 		row.label:SetAlpha(dim and 0.4 or 1)
 		row.val:SetAlpha(dim and 0.4 or 1)
 	end
 	local sky = SKIES[rules.sky]
 	L.note:SetText(sky and sky.desc or (rules.sky == 0 and "Random sky. Rain and storms bring stronger wind." or ""))
+	if L.DrawBans then L.DrawBans() end
 	L.less:SetShown(lobby.solo)
 	L.more:SetShown(lobby.solo)
 	L.less:SetEnabled(#players > 2)
@@ -2022,7 +2062,7 @@ local function DrawLobby()
 	end
 
 	if host then
-		L.hint:SetText(teams and "Click a player to move them to the other team." or (lobby.solo and "Click Computer on a tank to let the computer play it (again for harder)." or "Waiting for players to join."))
+		L.hint:SetText(teams and "Click a player to move them to the other team." or (lobby.solo and "Click Computer for an AI tank, again for harder." or "Waiting for players to join."))
 	else
 		L.hint:SetText(InRoster(players, Me()) and "Waiting for the host to start." or "Joining...")
 	end
@@ -2215,16 +2255,18 @@ end
 -- Weighted random item index (shared PRNG, so the same on every client)
 -- rounds: rounds played so far (crate drops only); `late` items gain 1 weight per 3 rounds, up to +8
 -- given: for starting items and the shop's leftover gold, which skip crate-only items
+-- Banned items never come up; nil when everything is banned
 local function PickItem(rounds, given)
-	local function Weight(w)
-		if given and w.crate then return 0 end
+	local function Weight(w, i)
+		if (given and w.crate) or RULEDEFS.Banned(game.rules, i) then return 0 end
 		return (w.weight or 0) + (w.late and min(8, floor((rounds or 0) / 3)) or 0)
 	end
 	local total = 0
-	for _, w in ipairs(WEAPONS) do total = total + Weight(w) end
+	for i, w in ipairs(WEAPONS) do total = total + Weight(w, i) end
+	if total == 0 then return end
 	local r = Rand(1, total)
 	for i, w in ipairs(WEAPONS) do
-		r = r - Weight(w)
+		r = r - Weight(w, i)
 		if r <= 0 then return i end
 	end
 end
@@ -2615,7 +2657,8 @@ local function ApplyPower(t, i, arg)
 	if w.power == "shield" then
 		t.shield = SHIELD
 	elseif w.power == "moves" then
-		t.fuel = t.fuel + 2 * game.rules.dist
+		t.fuel = t.fuel + 2 * RULEDEFS.DIST
+		t.boost = game.turn -- double driving speed for the rest of this turn (frame.Fast)
 	elseif w.power == "jet" then
 		-- Touchdown after a flight (the drawn tank drops from where it flew to)
 		t.col, t.x, t.y = arg, (arg - 0.5) * COLW, game.h[arg]
@@ -2725,10 +2768,12 @@ local function EndTurn()
 			and #game.crates < min(MAXCRATES, 2 + floor(alive / 2)) then
 			local col = Rand(10, NCOLS - 10)
 			local w = PickItem(floor((game.turn - 1) / max(1, alive)))
-			SpawnCrate(col, w)
-			-- Dropped onto a tank: it catches it
-			for _, o in ipairs(game.tanks) do
-				if o.alive and abs(o.col - col) <= 6 then Collect(#game.crates, o, true) break end
+			if w then -- nil: everything is banned, so no crate
+				SpawnCrate(col, w)
+				-- Dropped onto a tank: it catches it
+				for _, o in ipairs(game.tanks) do
+					if o.alive and abs(o.col - col) <= 6 then Collect(#game.crates, o, true) break end
+				end
 			end
 		end
 		-- Big matches (6+ tanks): from turn 18 (the counter at the top left) a pair of teleporters
@@ -2737,7 +2782,7 @@ local function EndTurn()
 			frame.SpawnPortals()
 		end
 		local t = game.tanks[game.cur]
-		-- Fuel is counted in columns: each "move" in the rules is worth one Move distance
+		-- Fuel is counted in columns: each "move" in the rules is worth RULEDEFS.DIST columns
 		local r = game.rules
 		-- Far from every enemy: extra fuel (and room for it), 1 column per 4 past 100 columns away,
 		-- up to one more move's worth. Only when the rules give fuel at all.
@@ -2745,8 +2790,12 @@ local function EndTurn()
 		for _, o in ipairs(game.tanks) do
 			if o.alive and o.team ~= t.team then near = min(near, abs(o.col - t.col)) end
 		end
-		local bonus = r.gain > 0 and min(r.dist, floor(max(0, near - 100) / 4)) or 0
-		t.fuel = max(t.fuel, min(r.moves * r.dist + bonus, t.fuel + r.gain * r.dist + bonus))
+		local bonus = r.gain > 0 and min(RULEDEFS.DIST, floor(max(0, near - 100) / 4)) or 0
+		if r.gain >= 4 then
+			t.fuel = 1000000 -- unlimited
+		else
+			t.fuel = max(t.fuel, min(r.moves * RULEDEFS.DIST + bonus, t.fuel + r.gain * RULEDEFS.DIST + bonus))
+		end
 		Announce()
 	end
 	DrawAll()
@@ -2830,6 +2879,20 @@ local function Launch()
 
 	Particle("flash", tx, ty, 0, 0, 0.12, 14, 22, 1)
 	for k = 1, 3 do Particle("smoke", tx, ty, cos(a) * 25 * k, sin(a) * 25 * k, 0.8, 4, 12, 0.4) end
+	-- Muzzle blast, bigger with more power: a faint ring, then smoke bursting out to both sides of the
+	-- barrel (almost square to it, swept a little forward), fast at first and billowing out as it slows
+	local p = t.power / 100
+	Particle("ring", tx, ty, cos(a) * 40 * p, sin(a) * 40 * p, 0.18 + 0.1 * p, 4, 12 + 30 * p, 0.25 + 0.4 * p, { 1, 0.95, 0.85 })
+	for side = -1, 1, 2 do
+		for _ = 1, 2 + floor(4 * p) do
+			local sa = a + side * rad(65 + random() * 25)
+			local sp = (80 + random() * 140) * (0.4 + 0.6 * p)
+			Particle("blast", tx, ty, cos(sa) * sp, sin(sa) * sp, 0.5 + 0.6 * p,
+				3, 8 + 18 * p * (0.6 + random() * 0.4), 0.3 + 0.35 * p)
+		end
+	end
+	-- Very high power kicks the screen: nothing at 80, a light jolt at full
+	if p > 0.8 and shakeT < 0.25 then shakeT, shakeA = 0.25, (p - 0.8) * 20 end
 	vis[game.cur].recoil = 0.15
 	DrawStatus()
 end
@@ -2877,7 +2940,7 @@ local function StepShell(s, w)
 		end
 	end
 	s.vy = s.vy - G * STEP
-	s.vx = s.vx + game.wind * WINDK * STEP
+	if not w.calm then s.vx = s.vx + game.wind * WINDK * STEP end
 	s.x, s.y = s.x + s.vx * STEP, s.y + s.vy * STEP
 	s.steps = s.steps + 1
 	if s.x < 0 or s.x >= W or s.steps > 120 * 30 then return "out" end
@@ -3137,7 +3200,7 @@ function frame.AISim(t, angle, power, w)
 	local vx, vy, dt = cos(a) * v, sin(a) * v, 1 / 30
 	for k = 1, 300 do
 		vy = vy - G * dt
-		vx = vx + game.wind * WINDK * dt
+		if not w.calm then vx = vx + game.wind * WINDK * dt end
 		x, y = x + vx * dt, y + vy * dt
 		if x < 0 or x >= W then return x end
 		if k > 2 and y <= (game.h[floor(x / COLW) + 1] or 0) then return x end
@@ -3286,7 +3349,10 @@ do
 	end)
 end
 
--- Held A / D: one column at a time at the drawn tank's speed (20 columns a second).
+-- Rocket Boots used this turn: the tank drives (and is drawn driving) twice as fast
+function frame.Fast(t) return t.boost == game.turn end
+
+-- Held A / D: one column at a time at the drawn tank's speed (20 columns a second, 40 with Rocket Boots).
 -- A stretch ends (and is sent) on release, a turn around, a land mine or anything that ends the turn.
 function frame.Drive(elapsed)
 	local dir = (held.D and 1 or 0) - (held.A and 1 or 0)
@@ -3304,8 +3370,8 @@ function frame.Drive(elapsed)
 		game.drive = dv
 	end
 	-- Speed is along the ground: a column up or down a slope costs its path length, so hills take longer
-	dv.acc = min(dv.acc + 20 * elapsed, 5)
 	local t, start = game.tanks[game.cur], dv.n
+	dv.acc = min(dv.acc + (frame.Fast(t) and 40 or 20) * elapsed, 5)
 	while true do
 		-- Capped at CLIMB: a bigger drop is a fall, not a slope (and has to stay affordable)
 		local rise = max(-CLIMB, min(CLIMB, (game.h[t.col + dir] or t.y) - t.y))
@@ -3419,7 +3485,10 @@ local function StartGame(s, roster, teams, rules, solo, host)
 	end
 	PlaceProps()
 	for _, t in ipairs(game.tanks) do
-		for _ = 1, rules.start do GiveItem(t, PickItem(nil, true)) end
+		for _ = 1, rules.start do
+			local k = PickItem(nil, true)
+			if k then GiveItem(t, k) end
+		end
 	end
 
 	-- Turn order: shuffled, or alternating teams (each team shuffled)
@@ -3439,7 +3508,7 @@ local function StartGame(s, roster, teams, rules, solo, host)
 	-- Random first player (shared PRNG); rotating the order keeps teams alternating
 	game.oi = Rand(1, #game.order)
 	game.cur = game.order[game.oi]
-	game.tanks[game.cur].fuel = min(rules.moves, rules.gain) * rules.dist
+	game.tanks[game.cur].fuel = rules.gain >= 4 and 1000000 or min(rules.moves, rules.gain) * RULEDEFS.DIST
 	game.wind = Rand(-game.windMax, game.windMax)
 	game.turnStart = GetTime()
 
@@ -3540,15 +3609,16 @@ function shop.Finish()
 		while left >= 15 and tries < 200 do
 			tries = tries + 1
 			local k = PickItem(nil, true)
+			if not k then break end -- everything is banned
 			local w = WEAPONS[k]
 			if Price(w) <= left and (w.power or max(0, t.ammo[k]) < (w.one and 1 or CRATEAMMO)) then
 				GiveItem(t, k)
 				left = left - Price(WEAPONS[k])
 			end
 		end
-		-- Change too small for anything else goes on Rocket Boots
+		-- Change too small for anything else goes on Rocket Boots (unless they're banned)
 		for k, w in ipairs(WEAPONS) do
-			if w.power == "moves" then
+			if w.power == "moves" and not RULEDEFS.Banned(game.rules, k) then
 				while left >= Price(w) do
 					GiveItem(t, k)
 					left = left - Price(w)
@@ -3582,7 +3652,7 @@ function shop.Receive(i, list)
 	local cart, cost = {}, 0
 	for _, k in ipairs(list) do
 		local w = WEAPONS[k]
-		if w and w.weight and not w.crate then
+		if w and w.weight and not w.crate and not RULEDEFS.Banned(game.rules, k) then
 			cost = cost + Price(w)
 			if cost > game.rules.gold then break end
 			tinsert(cart, k)
@@ -3765,10 +3835,73 @@ do
 		end
 		row.less:SetScript("OnClick", function() Step(-1) end)
 		row.more:SetScript("OnClick", function() Step(1) end)
-		if row.toggle then
+		if row.toggle and d.edit then
+			row.toggle:SetScript("OnClick", function() L.bans:SetShown(not L.bans:IsShown()) end)
+		elseif row.toggle then
 			row.toggle:SetScript("OnClick", function() Step(lobby.rules[d.key] == d.lo and 1 or -1) end)
 		end
 	end
+
+	-- Ban list: every crate item over the lobby. The host clicks to ban or allow; everyone else can look.
+	-- Built in a function so its locals don't count toward the main chunk's 200.
+	function L.MakeBans()
+		local bans = CreateFrame("Frame", nil, L)
+		bans:SetSize(560, 296)
+		bans:SetPoint("CENTER", L)
+		bans:SetFrameLevel(L:GetFrameLevel() + 20)
+		bans:EnableMouse(true)
+		Panel(bans)
+		-- Solid underneath, so the lobby's text doesn't show through the panel
+		local solid = bans:CreateTexture(nil, "BACKGROUND", nil, -1)
+		solid:SetAllPoints()
+		solid:SetColorTexture(0.06, 0.06, 0.07, 1)
+		bans:Hide()
+		L.bans = bans
+		local title = bans:CreateFontString(nil, "OVERLAY")
+		title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+		title:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
+		title:SetPoint("TOPLEFT", 12, -9)
+		title:SetText("Banned items")
+		-- The Big One makes this list a row longer than the shop's, so the description goes under the
+		-- lowest row and the panel grows to fit
+		local items, low = frame.ItemGrid(bans, true)
+		bans.items = items
+		bans:SetHeight(-low + 6 + 28 + 40)
+		local desc = bans:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		desc:SetPoint("TOPLEFT", 12, low - 6)
+		desc:SetPoint("TOPRIGHT", -12, low - 6)
+		desc:SetJustifyH("LEFT")
+		local hint = bans:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+		hint:SetPoint("BOTTOMLEFT", 12, 14)
+		local done = FlatButton(bans, 110, 22, "Done")
+		done:SetPoint("BOTTOMRIGHT", -10, 8)
+		done:SetScript("OnClick", function() bans:Hide() end)
+		for _, b in ipairs(bans.items) do
+			b.mark = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+			b.mark:SetPoint("RIGHT", -6, 0)
+			b:SetScript("OnClick", function(self)
+				if not IsHost() then return end
+				lobby.rules.ban = RULEDEFS.FlipBan(lobby.rules, self.idx)
+				BroadcastLobby()
+			end)
+			b:SetScript("OnEnter", function(self)
+				local wp = WEAPONS[self.idx]
+				desc:SetText(wp.name .. ": |cffffffff" .. wp.desc .. "|r")
+			end)
+			b:SetScript("OnLeave", function() desc:SetText("") end)
+		end
+		function L.DrawBans()
+			if not lobby then return end
+			hint:SetText(IsHost() and "Click to ban or allow. Banned items can't be bought, found in crates or started with."
+				or "Banned items can't be bought, found in crates or started with. The host picks them.")
+			for _, b in ipairs(bans.items) do
+				local banned = RULEDEFS.Banned(lobby.rules, b.idx)
+				b.mark:SetText(banned and "|cffff5040Banned|r" or "")
+				b.name:SetAlpha(banned and 0.4 or 1)
+			end
+		end
+	end
+	L.MakeBans()
 	L.more:SetScript("OnClick", function()
 		if not (lobby and lobby.solo) or #lobby.players >= MAXPLAYERS then return end
 		local k = 2
@@ -3894,6 +4027,27 @@ do
 	end
 	r:SetScript("OnClick", Reopen)
 	open:SetScript("OnClick", Reopen)
+
+	-- Shift-drag moves it, and with it the toast it hangs under (a plain click reopens the window)
+	r:SetMovable(true)
+	r:SetClampedToScreen(true)
+	r:RegisterForDrag("LeftButton")
+	r:SetScript("OnDragStart", function(self)
+		if IsShiftKeyDown() then self.moving = true self:StartMoving() end
+	end)
+	r:SetScript("OnDragStop", function(self)
+		if not self.moving then return end
+		self.moving = nil
+		self:StopMovingOrSizing()
+		local x, top = self:GetCenter(), self:GetTop()
+		local y = top + 6 + toast:GetHeight()
+		toast:ClearAllPoints()
+		toast:SetPoint("TOP", UIParent, "BOTTOMLEFT", x, y)
+		GoblinShellshockDB = GoblinShellshockDB or {}
+		GoblinShellshockDB.toast = { "TOP", "BOTTOMLEFT", x, y }
+		self:ClearAllPoints()
+		self:SetPoint("TOP", toast, "BOTTOM", 0, -6)
+	end)
 	close:SetScript("OnClick", function() frame.Quit() end)
 end
 
@@ -4312,7 +4466,7 @@ local function AnimateTanks(e)
 					local dx = tx - v.x
 					local s = dx > 0 and 2 or -2
 					local grade = min(CLIMB, abs(GroundAt(v.x + s) - GroundAt(v.x))) / 2 -- a cliff edge isn't a slope
-					local step = 40 * e / sqrt(1 + grade * grade)
+					local step = (frame.Fast(t) and 80 or 40) * e / sqrt(1 + grade * grade)
 					v.x = abs(dx) <= step and tx or v.x + (dx > 0 and step or -step)
 				end
 				if v.warp and v.x == tx then
@@ -4709,7 +4863,14 @@ frame.ticker:SetScript("OnUpdate", function(self, elapsed)
 			if s then
 				-- Napalm blobs are just a hot glow with a flame trail
 				sv.halo:SetSize(s.blob and 12 or 14, s.blob and 12 or 14)
-				sv.halo:SetVertexColor(1, s.blob and 0.45 or 0.7, s.blob and 0.1 or 0.3)
+				local tint = shot.w.tint
+				if tint then
+					sv.halo:SetVertexColor(tint[1], tint[2], tint[3])
+					sv.body:SetVertexColor(tint[1], tint[2], tint[3])
+				else
+					sv.halo:SetVertexColor(1, s.blob and 0.45 or 0.7, s.blob and 0.1 or 0.3)
+					sv.body:SetVertexColor(1, 0.92, 0.75)
+				end
 				sv.halo:SetPoint("CENTER", field, "BOTTOMLEFT", s.x, s.y)
 				sv.body:SetPoint("CENTER", field, "BOTTOMLEFT", s.x, s.y + (s.roll and 3 or 0))
 				sv.body:SetRotation(s.roll and -s.x / 3 or atan2(s.vy, s.vx))
@@ -4722,7 +4883,7 @@ frame.ticker:SetScript("OnUpdate", function(self, elapsed)
 					Particle("flame", s.x, s.y, random(-5, 5), random(0, 10), 0.35, 6, 2, 0.8)
 				elseif push then
 					Particle("smoke", s.x, s.y, 0, 0, 0.9, 3, 10, 0.35)
-					Particle("ember", s.x, s.y, random(-15, 15), random(-5, 20), 0.25, 3, 1, 0.8)
+					Particle("ember", s.x, s.y, random(-15, 15), random(-5, 20), 0.25, 3, 1, 0.8, shot.w.tint)
 				end
 			end
 		end
@@ -4840,7 +5001,7 @@ function frame.InitMinimap()
 	local obj = LDB:NewDataObject("GoblinShellshock", {
 		type = "launcher",
 		label = "Goblin Shellshock",
-		icon = MEDIA .. "icon",
+		icon = MEDIA .. "minimap",
 		OnClick = function(_, btn)
 			if btn == "RightButton" and IsShiftKeyDown() then
 				frame.SetMinimap(false)
@@ -4869,7 +5030,7 @@ function frame.InitMinimap()
 	end
 	-- Polled, so it also catches a host leaving the group or going offline
 	C_Timer.NewTicker(1, function()
-		local icon = MEDIA .. (Busy() and "icon_live" or "icon")
+		local icon = MEDIA .. (Busy() and "minimap_live" or "minimap")
 		if obj.icon ~= icon then obj.icon = icon end
 	end)
 end
