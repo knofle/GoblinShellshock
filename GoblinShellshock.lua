@@ -234,7 +234,11 @@ do
 		["Rocket Boots"] = "INV_Gizmo_RocketBoot_01",      ["Blink"] = "Spell_Arcane_Blink",
 		["Goblin Jetpack"] = "INV_Gizmo_RocketBootExtreme",
 	}
-	for _, w in ipairs(WEAPONS) do w.icon = ICONS[w.name] or "INV_Misc_QuestionMark" end
+	for _, w in ipairs(WEAPONS) do
+		w.icon = ICONS[w.name] or "INV_Misc_QuestionMark"
+		-- Clients without this art (e.g. Forever) get the question mark instead of a blank square
+		if GetFileIDFromPath and not GetFileIDFromPath("Interface\\Icons\\" .. w.icon) then w.icon = "INV_Misc_QuestionMark" end
+	end
 end
 for _, d in ipairs(RULEDEFS) do
 	if d.key == "ban" then d.hi = 2 ^ #WEAPONS - 1 end
@@ -1805,7 +1809,7 @@ do
 	name:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
 	name:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
 	name:SetPoint("LEFT", icon, "RIGHT", 6, 0)
-	name:SetText("Goblin Shellshock |cffffffffLobby|r")
+	name:SetText("Goblin Shellshock |cffffffffLobby|r |cff808080v" .. VERSION .. "|r")
 
 	local x = FlatButton(L, 18, 18, "x")
 	x:SetPoint("RIGHT", header, "RIGHT", -6, 0)
@@ -2202,6 +2206,19 @@ local function GenTerrain(pick)
 			v = v + floor(80 * max(0, 0.6 * q - abs(i - q), 0.6 * q - abs(i - 3 * q)) / (0.6 * q))
 		end
 		h[i] = max(20, min(H - 70, v))
+	end
+	if style == 4 then
+		-- Merge ledges narrower than 12 columns into the step to their left, so no needle pillars or slot holes
+		local i = 1
+		while i <= NCOLS do
+			local j = i
+			while j < NCOLS and h[j + 1] == h[i] do j = j + 1 end
+			if j - i + 1 < 12 then
+				local v = i > 1 and h[i - 1] or h[min(NCOLS, j + 1)]
+				for k = i, j do h[k] = v end
+			end
+			i = j + 1
+		end
 	end
 	return h, STYLES[style]
 end

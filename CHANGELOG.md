@@ -1,5 +1,11 @@
 # Goblin Shellshock
 
+## 0.59
+
+- Mesas no longer make tiny pillars or holes.
+- Items show a question mark if their icon is missing from your game client.
+- The lobby header shows the addon version.
+
 ## 0.58
 
 - Ban items in the lobby: the Banned items rule opens the item list, where the host clicks items to ban or allow them. Banned items can't be bought, never drop from crates and are never starting items.
